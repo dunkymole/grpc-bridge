@@ -67,7 +67,9 @@ the CA certificate bundle copied into the image.
 
 ## Typed client
 
-See the [runnable TypeScript examples](web/examples/client.ts) and
+The reusable package is prepared as `@dunkymole/grpc-bridge`. See its
+[API and compatibility guide](web/README.md), the
+[runnable TypeScript examples](web/examples/client.ts), and the
 [client addressing and routing guide](docs/CLIENT-AND-ROUTING.md). Run them with
 `cd web && npm ci && npm run example` while the Compose stack is running.
 The client sends the backend host and port in the WebSocket handshake. The bridge
@@ -77,14 +79,13 @@ restarting the bridge. Destination selection is separate from gRPC metadata.
 ```ts
 import { createClient } from "@connectrpc/connect";
 import { DemoService } from "./gen/demo_pb.js";
-import { openChannel } from "./channel.js";
-import { createTunnelTransport } from "./transport.js";
-import { inputQueue } from "./queue.js";
+import { openBridgeConnection, inputQueue } from "@dunkymole/grpc-bridge";
 
-const channel = await openChannel("ws://localhost:8080/tunnel", "", {
+const connection = await openBridgeConnection({
+  url: "ws://localhost:8080/tunnel",
   target: "python-demo:50051",
 });
-const client = createClient(DemoService, createTunnelTransport(channel));
+const client = createClient(DemoService, connection.transport);
 const input = inputQueue<{ text: string }>();
 
 const receiving = (async () => {
@@ -96,12 +97,12 @@ await input.send({ text: "Hello, Python" });
 // Responses arrive while the request is still open.
 await input.complete();
 await receiving;
-channel.close();
+await connection.close();
 ```
 
 Await each `send()`; do not build an unbounded array of pending sends. Application
-code should consume or cancel every response stream. This client is source-level
-prototype code, not yet a published npm package.
+code should consume or cancel every response stream. The client never reconnects,
+retries, or replays RPCs automatically.
 
 ## Development and verification
 
@@ -142,17 +143,17 @@ See the [complete configuration reference](docs/CONFIGURATION.md) for every flag
 environment variable, destination policy field, client option, and fixed limit.
 Token forwarding to backend RPCs is optional and disabled by default.
 
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `LISTEN` / `-listen` | `127.0.0.1:8080` (image: `0.0.0.0:8080`) | HTTP listener |
-| `UPSTREAM` / `-upstream` | `127.0.0.1:50051` | Default backend when the client omits a target |
-| `TARGETS_FILE` / `-targets-file` | empty (Compose: `/config/targets.json`) | Live JSON allowlist for client-selected destinations |
-| `ALLOWED_ORIGIN` / `-origin` | `http://localhost:8080` | Exact allowed browser Origin |
-| `TUNNEL_TOKEN` | empty | Optional shared base64url-safe token |
-| `-max-connections` | `256` | Concurrent tunnel admission limit |
-| `TLS_CERT`, `TLS_KEY` | empty | PEM files enabling HTTPS/WSS |
-| `UPSTREAM_TLS=true` | false | Verify backend certificate and require `h2` ALPN |
-| `ASSETS` / `-assets` | `web/dist` (image: `/web`) | Demo files |
+| Setting                          | Default                                  | Purpose                                              |
+| -------------------------------- | ---------------------------------------- | ---------------------------------------------------- |
+| `LISTEN` / `-listen`             | `127.0.0.1:8080` (image: `0.0.0.0:8080`) | HTTP listener                                        |
+| `UPSTREAM` / `-upstream`         | `127.0.0.1:50051`                        | Default backend when the client omits a target       |
+| `TARGETS_FILE` / `-targets-file` | empty (Compose: `/config/targets.json`)  | Live JSON allowlist for client-selected destinations |
+| `ALLOWED_ORIGIN` / `-origin`     | `http://localhost:8080`                  | Exact allowed browser Origin                         |
+| `TUNNEL_TOKEN`                   | empty                                    | Optional shared base64url-safe token                 |
+| `-max-connections`               | `256`                                    | Concurrent tunnel admission limit                    |
+| `TLS_CERT`, `TLS_KEY`            | empty                                    | PEM files enabling HTTPS/WSS                         |
+| `UPSTREAM_TLS=true`              | false                                    | Verify backend certificate and require `h2` ALPN     |
+| `ASSETS` / `-assets`             | `web/dist` (image: `/web`)               | Demo files                                           |
 
 To try authentication locally, set `TUNNEL_TOKEN` in an ignored `.env` file,
 recreate the bridge, then enter that token in the demo. Tokens are offered in a

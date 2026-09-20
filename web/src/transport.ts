@@ -14,7 +14,11 @@ import { frame, unframe, validateStatus } from "./framing.js";
 /** Standard Connect typed clients, with native gRPC bytes inside HTTP/2. */
 export function createTunnelTransport(
   connection: H2Connection,
-  options: { bearerToken?: string } = {},
+  options: {
+    bearerToken?: string;
+    authority?: string;
+    scheme?: "http" | "https";
+  } = {},
 ): Transport {
   // Opt-in default metadata; an explicit per-call authorization takes precedence.
   const authorization = options.bearerToken
@@ -96,8 +100,8 @@ export function createTunnelTransport(
       const response = await connection.request({
         method: "POST",
         path: `/${method.parent.typeName}/${method.name}`,
-        authority: "backend",
-        scheme: "http",
+        authority: options.authority ?? "backend",
+        scheme: options.scheme ?? "http",
         headers: Object.fromEntries(headers),
         body,
         signal: abort.signal,

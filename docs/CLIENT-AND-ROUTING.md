@@ -6,20 +6,26 @@ its backend connection before accepting the tunnel. All RPCs on that connection
 use the selected backend.
 
 ```ts
-import { connectDemo } from "./examples/client.js";
-const { client, close } = await connectDemo(
-  "ws://localhost:8080/tunnel", // Public bridge address
-  "", // Optional tunnel token
-  "python-demo:50051", // Backend address, resolved by the bridge
-);
+import { createClient } from "@connectrpc/connect";
+import { openBridgeConnection } from "@dunkymole/grpc-bridge";
+import { DemoService } from "./gen/demo_pb.js";
+
+const connection = await openBridgeConnection({
+  url: "ws://localhost:8080/tunnel", // Public bridge address
+  tunnelToken: "", // Optional tunnel token
+  target: "python-demo:50051", // Resolved by the bridge
+});
+const client = createClient(DemoService, connection.transport);
 try {
   console.log((await client.echo({ text: "hello" })).text);
 } finally {
-  close();
+  await connection.close();
 }
 ```
 
-The lower-level API is `openChannel(url, token, { target: "host:port" })`.
+The managed package API is `openBridgeConnection({ url, target, tunnelToken })`.
+It exposes a standard Connect transport and explicit lifecycle/cleanup. The
+lower-level API remains `openChannel(url, token, { target: "host:port" })`.
 For deployment use `wss://` with TLS and the configured browser Origin.
 
 ## Run the examples
@@ -95,15 +101,23 @@ RPC metadata such as `x-request-id` stays inside HTTP/2 and reaches the backend.
 The bridge forwards these bytes without parsing them. An `x-target-host` RPC
 header would not change the selected destination.
 
-Likewise HTTP/2 `:authority` is separate from the TCP destination. The prototype
-client currently sends `backend` as its authority; exposing a configurable
-authority for upstream virtual hosting remains future work. To reach another
-backend, open another channel. Each channel can still multiplex many RPCs.
+Likewise HTTP/2 `:authority` is separate from the TCP destination. The managed API
+defaults it to the selected target and accepts an explicit `authority` for upstream
+virtual hosting. To reach another backend, open another connection. Each connection
+can still multiplex many RPCs.
 
 ## Forwarding authentication to the backend
 
-Use `connectDemo(url, token, target, { forwardToken: true })` to send the same
-token as RPC bearer metadata. Forwarding is off by default. For separate backend
-credentials use `createTunnelTransport(channel, { bearerToken })`. See the
+Set `backendBearerToken` to send a token as RPC bearer metadata. It accepts a
+static value or async provider and can use the same value as `tunnelToken` when
+that is intentional. Forwarding is off by default. See the
 [configuration reference](CONFIGURATION.md#client-authentication-and-forwarding)
 for precedence, security considerations, and runner environment variables.
+
+## Reusing a channel
+
+One channel already multiplexes many RPCs to one backend. The package's
+`BridgeConnectionPool` can explicitly share it between clients when bridge URL,
+target, HTTP/2 authority, scheme, and a caller-supplied `authenticationContext`
+match. Leases are reference-counted; releasing the last lease closes the channel.
+See the [package guide](../web/README.md#explicit-connection-reuse).

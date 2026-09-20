@@ -1,5 +1,6 @@
 node_modules/
 dist/
+package-dist/
 .venv/
 __pycache__/
 *.pyc
@@ -8,3 +9,4 @@ bin/
 *.pem
 *.key
 test-results/
+*.tgz

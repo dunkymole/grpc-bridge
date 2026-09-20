@@ -1,7 +1,6 @@
 import { createClient, Code, ConnectError } from "@connectrpc/connect";
 import { DemoService } from "../src/gen/demo_pb.js";
-import { openChannel } from "../src/channel.js";
-import { createTunnelTransport } from "../src/transport.js";
+import { openBridgeConnection } from "../src/index.js";
 import { inputQueue } from "../src/queue.js";
 
 /** The URL addresses the gateway, not the private Python host. */
@@ -12,14 +11,14 @@ export async function connectDemo(
   options: { forwardToken?: boolean } = {},
 ) {
   // The bridge authorizes and resolves this host:port before HTTP/2 starts.
-  const channel = await openChannel(gatewayUrl, tunnelToken, { target });
-  const client = createClient(
-    DemoService,
-    createTunnelTransport(channel, {
-      bearerToken: options.forwardToken ? tunnelToken : undefined,
-    }),
-  );
-  return { client, close: () => channel.close() };
+  const connection = await openBridgeConnection({
+    url: gatewayUrl,
+    target,
+    tunnelToken,
+    backendBearerToken: options.forwardToken ? tunnelToken : undefined,
+  });
+  const client = createClient(DemoService, connection.transport);
+  return { client, close: () => connection.close() };
 }
 
 /** Runs in browsers or Node 24+. No Node-only imports in this module. */
@@ -100,6 +99,6 @@ export async function runExamples(
       `After cancellation: ${(await client.echo({ text: "still connected" })).text}`,
     );
   } finally {
-    close();
+    await close();
   }
 }

@@ -11,6 +11,7 @@
 - [x] Repeatable unit, fuzz, and Python interoperability tests.
 
 - [x] Runnable TypeScript examples and client-selected, live-allowlisted destinations.
+- [x] Versioned TypeScript package with lifecycle events, token providers, and explicit connection reuse.
 
 ## v0.2 — protocol hardening
 
@@ -25,7 +26,6 @@
 
 ## v0.3 — reusable library and community release
 
-- Publish a versioned client package with a documented compatibility policy.
 - Establish browser support matrix and headless browser CI.
 - Add a .NET backend interoperability fixture.
 - Add scoped identity integration and deployment examples.

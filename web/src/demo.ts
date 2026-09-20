@@ -5,10 +5,8 @@ import {
   type Client,
 } from "@connectrpc/connect";
 import { DemoService, type Message } from "./gen/demo_pb.js";
-import { openChannel } from "./channel.js";
-import { createTunnelTransport } from "./transport.js";
+import { openBridgeConnection, type BridgeConnection } from "./index.js";
 import { inputQueue } from "./queue.js";
-import type { H2Connection } from "@debdattabasu/h2ts";
 import { runChecks } from "./verify.js";
 
 const el = (id: string) => document.getElementById(id)!;
@@ -22,7 +20,7 @@ function log(id: string, message: string) {
     .join("\n");
   output.scrollTop = output.scrollHeight;
 }
-let connection: H2Connection | undefined,
+let connection: BridgeConnection | undefined,
   client: Client<typeof DemoService> | undefined;
 let counter: AbortController | undefined;
 let chat:
@@ -46,19 +44,15 @@ button("connect").onclick = async () => {
   button("connect").disabled = true;
   el("status").textContent = "Connecting…";
   try {
-    connection = await openChannel(
-      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/tunnel`,
-      value("token"),
-      { target: value("target") },
-    );
-    client = createClient(
-      DemoService,
-      createTunnelTransport(connection, {
-        bearerToken: (el("forward-token") as HTMLInputElement).checked
-          ? value("token")
-          : undefined,
-      }),
-    );
+    connection = await openBridgeConnection({
+      url: `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/tunnel`,
+      target: value("target"),
+      tunnelToken: value("token"),
+      backendBearerToken: (el("forward-token") as HTMLInputElement).checked
+        ? value("token")
+        : undefined,
+    });
+    client = createClient(DemoService, connection.transport);
     enabled(true);
     el("status").textContent = "Connected · one HTTP/2 session";
     const current = connection;
@@ -76,7 +70,7 @@ button("connect").onclick = async () => {
     button("connect").disabled = false;
   }
 };
-button("disconnect").onclick = () => connection?.close();
+button("disconnect").onclick = () => void connection?.close();
 action("echo", "echo-output", async () => {
   const result = await client!.echo(
     { text: value("echo-input") },

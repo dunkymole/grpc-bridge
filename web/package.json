@@ -1,13 +1,56 @@
 {
-  "name": "@grpc-bridge/browser",
+  "name": "@dunkymole/grpc-bridge",
   "version": "0.1.0",
-  "private": true,
+  "description": "Typed gRPC over HTTP/2 through gRPC Bridge WebSocket tunnels",
   "type": "module",
+  "main": "./package-dist/index.js",
+  "types": "./package-dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./package-dist/index.d.ts",
+      "import": "./package-dist/index.js"
+    }
+  },
+  "files": [
+    "package-dist",
+    "README.md",
+    "LICENSE",
+    "licenses"
+  ],
+  "sideEffects": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dunkymole/grpc-bridge.git",
+    "directory": "web"
+  },
+  "homepage": "https://github.com/dunkymole/grpc-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/dunkymole/grpc-bridge/issues"
+  },
+  "keywords": [
+    "grpc",
+    "http2",
+    "websocket",
+    "browser",
+    "streaming",
+    "connectrpc"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc --noEmit && node build.mjs",
+    "build": "npm run build:package && npm run build:demo",
+    "build:package": "node scripts/clean-package.mjs && tsc -p tsconfig.package.json && node scripts/verify-package.mjs",
+    "build:demo": "tsc --noEmit && node build.mjs",
     "test": "tsx --test test/*.test.ts",
     "test:e2e": "tsx --test test/*.e2e.ts",
-    "example": "tsx examples/run.ts"
+    "example": "tsx examples/run.ts",
+    "size": "npm run build:package && node scripts/measure-package.mjs",
+    "prepack": "npm run build:package"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",

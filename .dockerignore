@@ -1,7 +1,9 @@
 .git
 **/node_modules
 **/dist
+**/package-dist
 **/__pycache__
 bin
 .env
 test-results
+*.tgz
