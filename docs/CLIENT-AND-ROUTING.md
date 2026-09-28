@@ -116,8 +116,11 @@ for precedence, security considerations, and runner environment variables.
 
 ## Reusing a channel
 
-One channel already multiplexes many RPCs to one backend. The package's
-`BridgeConnectionPool` can explicitly share it between clients when bridge URL,
-target, HTTP/2 authority, scheme, and a caller-supplied `authenticationContext`
-match. Leases are reference-counted; releasing the last lease closes the channel.
+One channel already multiplexes many RPCs to one backend. Configure a
+`SharedBridgeConnection` once with `createSharedBridgeConnection(options)`
+and pass that handle to consumers. Its parameterless `acquire()` lazily opens
+the connection and returns a lease. Concurrent leases share it; the last
+`release()` closes it. `dispose()` permanently shuts down the handle, including
+active leases and pending acquisitions. Separate destinations or identities
+use separate handles; no per-acquisition credentials or destination matching is involved.
 See the [package guide](../web/README.md#explicit-connection-reuse).

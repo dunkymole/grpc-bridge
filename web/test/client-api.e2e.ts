@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createClient } from "@connectrpc/connect";
 import {
-  createBridgeConnectionPool,
+  createSharedBridgeConnection,
   openBridgeConnection,
   type BridgeConnectionEvent,
 } from "../src/index.js";
@@ -57,10 +57,9 @@ test(
 );
 
 test(
-  "pool reuses only an explicitly matching route and authentication context",
+  "shared handle opens lazily, shares concurrent leases, and reopens after last release",
   { timeout: 10000 },
   async () => {
-    const pool = createBridgeConnectionPool();
     let providerCalls = 0;
     const options = {
       url,
@@ -70,12 +69,22 @@ test(
       },
       target: "python-demo:50051",
       authority: "python-demo",
-      authenticationContext: "integration-user",
     } as const;
-    const first = await pool.acquire(options);
-    const second = await pool.acquire(options);
+    const shared = createSharedBridgeConnection(options);
+    assert.equal(providerCalls, 0);
+    const [first, second] = await Promise.all([
+      shared.acquire(),
+      shared.acquire(),
+    ]);
     assert.strictEqual(first.transport, second.transport);
     assert.equal(providerCalls, 1);
+    const other = createSharedBridgeConnection(options);
+    const otherLease = await other.acquire();
+    assert.notStrictEqual(first.transport, otherLease.transport);
+    await other.dispose();
+    assert.equal(first.state, "open");
+    assert.equal(providerCalls, 2);
+    await first.release();
     await first.release();
     assert.equal(second.state, "open");
     assert.equal(
@@ -90,14 +99,14 @@ test(
     await second.closed;
     assert.equal(second.state, "closed");
 
-    const isolated = await pool.acquire({
-      ...options,
-      authenticationContext: "another-user",
-    });
+    const isolated = await shared.acquire();
     assert.notStrictEqual(isolated.transport, first.transport);
-    assert.equal(providerCalls, 2);
+    assert.equal(providerCalls, 3);
+    await shared.dispose();
+    assert.equal(isolated.state, "closed");
     await isolated.release();
-    await pool.close();
+    await shared.dispose();
+    await assert.rejects(shared.acquire(), /disposed/);
   },
 );
 

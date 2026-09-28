@@ -8,7 +8,7 @@ import {
   type Transport,
 } from "@connectrpc/connect";
 import { RecoveringConnection, type Session } from "../src/recovery.js";
-import { waitForReady, createBridgeConnectionPool } from "../src/client.js";
+import { waitForReady, createSharedBridgeConnection } from "../src/client.js";
 import { DemoService } from "../src/gen/demo_pb.js";
 
 const waiting = createContextValues().set(waitForReady, true);
@@ -95,17 +95,14 @@ test(
   },
 );
 
-test("pool shutdown cancels acquisitions even when a token provider has not returned", async () => {
-  const pool = createBridgeConnectionPool();
-  const pending = assert.rejects(
-    pool.acquire({
-      url: "ws://localhost:8080/tunnel",
-      authenticationContext: "pending",
-      tunnelToken: () => new Promise<string>(() => {}),
-    }),
-  );
+test("shared disposal cancels acquisitions even when a token provider has not returned", async () => {
+  const shared = createSharedBridgeConnection({
+    url: "ws://localhost:8080/tunnel",
+    tunnelToken: () => new Promise<string>(() => {}),
+  });
+  const pending = assert.rejects(shared.acquire());
   await Promise.resolve();
-  await pool.close();
+  await shared.dispose();
   await pending;
 });
 

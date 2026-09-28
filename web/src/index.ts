@@ -1,6 +1,6 @@
 export {
-  BridgeConnectionPool,
-  createBridgeConnectionPool,
+  SharedBridgeConnection,
+  createSharedBridgeConnection,
   createBridgeConnection,
   waitForReady,
   openBridgeConnection,
@@ -10,7 +10,6 @@ export {
   type BridgeConnectionListener,
   type BridgeConnectionOptions,
   type BridgeConnectionState,
-  type PooledBridgeConnectionOptions,
   type TokenProvider,
   type TokenSource,
 } from "./client.js";

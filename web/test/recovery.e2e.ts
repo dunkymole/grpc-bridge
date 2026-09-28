@@ -6,11 +6,11 @@ import {
   createClient,
   createContextValues,
 } from "@connectrpc/connect";
-import { createBridgeConnectionPool, waitForReady } from "../src/index.js";
+import { createSharedBridgeConnection, waitForReady } from "../src/index.js";
 import { DemoService } from "../src/gen/demo_pb.js";
 
 test(
-  "pool leases and existing clients survive a broken WebSocket without replaying streams",
+  "shared leases and existing clients survive a broken WebSocket without replaying streams",
   { timeout: 15000 },
   async () => {
     const NativeWebSocket = globalThis.WebSocket;
@@ -21,7 +21,7 @@ test(
         sockets.push(this);
       }
     };
-    const pool = createBridgeConnectionPool();
+    let shared: ReturnType<typeof createSharedBridgeConnection> | undefined;
     let tokens = 0;
     try {
       const options = {
@@ -30,10 +30,10 @@ test(
           tokens++;
           return process.env.TUNNEL_TOKEN ?? "";
         },
-        authenticationContext: "recovery-test",
       };
-      const first = await pool.acquire(options);
-      const second = await pool.acquire(options);
+      shared = createSharedBridgeConnection(options);
+      const first = await shared.acquire();
+      const second = await shared.acquire();
       const client = createClient(DemoService, first.transport);
       const stream = client
         .count({ number: 100, delayMs: 100 })
@@ -46,7 +46,7 @@ test(
       );
       sockets[0]!.close();
       await failed;
-      const third = await pool.acquire(options);
+      const third = await shared.acquire();
       assert.strictEqual(first.transport, third.transport);
       await first.release();
       const reply = await client.echo(
@@ -66,7 +66,7 @@ test(
       await third.closed;
       assert.equal(third.state, "closed");
     } finally {
-      await pool.close();
+      await shared?.dispose();
       globalThis.WebSocket = NativeWebSocket;
     }
   },

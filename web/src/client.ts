@@ -98,73 +98,63 @@ export async function openBridgeConnection(
   }
 }
 
-export interface PooledBridgeConnectionOptions extends BridgeConnectionOptions {
-  /**
-   * Stable, non-secret identity for the authentication context. Two callers
-   * share a channel only when this and all route fields match exactly.
-   */
-  authenticationContext: string;
-}
-
 export interface BridgeConnectionLease {
   readonly state: BridgeConnectionState;
   readonly transport: Transport;
+  /** Resolves when the underlying connection closes, not on this lease's release. */
   readonly closed: Promise<void>;
   subscribe(listener: BridgeConnectionListener): () => void;
-  /** Releases this reference. The last release closes the shared channel. */
+  /** Stop using this lease after release. The last release closes the connection. */
   release(): Promise<void>;
 }
 
-interface PoolEntry {
+interface SharedEntry {
   references: number;
-  connection: Promise<BridgeConnection>;
-  channel: BridgeConnection;
+  ready: Promise<BridgeConnection>;
+  connection: BridgeConnection;
 }
 
-/** Explicit, reference-counted reuse. Idle entries are closed, not cached. */
-export class BridgeConnectionPool {
-  private readonly entries = new Map<string, PoolEntry>();
-  private closed = false;
+/** One configured destination and authentication policy, opened lazily by acquire(). */
+export class SharedBridgeConnection {
+  private readonly options: BridgeConnectionOptions;
+  private entry?: SharedEntry;
+  private disposed = false;
+  private disposal?: Promise<void>;
+  private readonly closing = new Set<Promise<void>>();
 
-  async acquire(
-    options: PooledBridgeConnectionOptions,
-  ): Promise<BridgeConnectionLease> {
-    if (this.closed) throw new Error("Bridge connection pool is closed");
-    if (!options.authenticationContext)
-      throw new Error("authenticationContext must be non-empty");
-    const key = poolKey(options);
-    let entry = this.entries.get(key);
+  constructor(options: BridgeConnectionOptions) {
+    // Snapshot configuration; token providers can still refresh credentials.
+    this.options = { ...options };
+  }
+
+  async acquire(): Promise<BridgeConnectionLease> {
+    if (this.disposed) throw new Error("Shared bridge connection is disposed");
+    let entry = this.entry;
     if (!entry) {
-      const channel = createBridgeConnection(options) as RecoveringConnection;
-      const ready = channel.initial.then(
-        () => channel,
-        async (error) => {
-          await channel.close();
-          throw error;
-        },
-      );
-      entry = { references: 0, connection: ready, channel };
-      this.entries.set(key, entry);
-      void entry.connection.then(
-        (connection) =>
-          connection.closed.finally(() => {
-            if (this.entries.get(key) === entry) this.entries.delete(key);
-          }),
-        () => {
-          if (this.entries.get(key) === entry) this.entries.delete(key);
-        },
-      );
+      const connection = createBridgeConnection(
+        this.options,
+      ) as RecoveringConnection;
+      entry = {
+        references: 0,
+        connection,
+        ready: connection.initial.then(() => connection),
+      };
+      this.entry = entry;
     }
-    entry.references++;
+    const current = entry;
+    current.references++;
     let connection: BridgeConnection;
     try {
-      connection = await entry.connection;
-      if (this.closed) throw new Error("Bridge connection pool is closed");
+      connection = await current.ready;
+      if (this.disposed)
+        throw new Error("Shared bridge connection is disposed");
     } catch (error) {
-      entry.references--;
+      current.references--;
+      if (this.entry === current) this.entry = undefined;
+      await this.closeEntry(current);
       throw error;
     }
-    let released = false;
+    let release: Promise<void> | undefined;
     return {
       get state() {
         return connection.state;
@@ -172,39 +162,44 @@ export class BridgeConnectionPool {
       transport: connection.transport,
       closed: connection.closed,
       subscribe: (listener) => connection.subscribe(listener),
-      release: async () => {
-        if (released) return;
-        released = true;
-        entry!.references--;
-        if (entry!.references === 0) {
-          if (this.entries.get(key) === entry) this.entries.delete(key);
-          await connection.close();
+      release: () => {
+        if (release) return release;
+        current.references--;
+        if (current.references === 0) {
+          if (this.entry === current) this.entry = undefined;
+          release = this.closeEntry(current);
+        } else {
+          release = Promise.resolve();
         }
+        return release;
       },
     };
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
-    const entries = [...this.entries.values()];
-    this.entries.clear();
-    await Promise.allSettled(entries.map((entry) => entry.channel.close()));
+  /** Permanently rejects acquisitions, cancels pending opens, and closes active leases. */
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
+    this.disposed = true;
+    const entry = this.entry;
+    this.entry = undefined;
+    if (entry) this.closeEntry(entry);
+    this.disposal = Promise.all([...this.closing]).then(() => {});
+    return this.disposal;
+  }
+
+  private closeEntry(entry: SharedEntry): Promise<void> {
+    const closing = entry.connection.close();
+    this.closing.add(closing);
+    void closing.then(
+      () => this.closing.delete(closing),
+      () => this.closing.delete(closing),
+    );
+    return closing;
   }
 }
 
-function poolKey(options: PooledBridgeConnectionOptions): string {
-  const url = new URL(options.url);
-  if (options.target !== undefined)
-    url.searchParams.set("target", options.target);
-  return JSON.stringify([
-    url.href,
-    options.authority ?? options.target ?? "backend",
-    options.scheme ?? "http",
-    options.authenticationContext,
-  ]);
-}
-
-export function createBridgeConnectionPool(): BridgeConnectionPool {
-  return new BridgeConnectionPool();
+export function createSharedBridgeConnection(
+  options: BridgeConnectionOptions,
+): SharedBridgeConnection {
+  return new SharedBridgeConnection(options);
 }

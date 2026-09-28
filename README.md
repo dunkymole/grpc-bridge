@@ -67,6 +67,12 @@ the CA certificate bundle copied into the image.
 
 ## Typed client
 
+Use `openBridgeConnection(options)` when you own the connection lifetime.
+For independent consumers, create one `SharedBridgeConnection` with
+`createSharedBridgeConnection(options)` and pass it to them. Consumers call
+`acquire()` and `release()`; the first acquisition opens the connection and
+the last release closes it. The owner calls `dispose()` at shutdown or logout.
+
 The reusable package is prepared as `@dunkymole/grpc-bridge`. See its
 [API and compatibility guide](web/README.md), the
 [runnable TypeScript examples](web/examples/client.ts), and the
