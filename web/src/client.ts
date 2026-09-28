@@ -1,4 +1,8 @@
-import { createContextKey, type Transport } from "@connectrpc/connect";
+import {
+  createContextKey,
+  type Interceptor,
+  type Transport,
+} from "@connectrpc/connect";
 import { RecoveringConnection } from "./recovery.js";
 import { openChannel } from "./channel.js";
 import { createTunnelTransport } from "./transport.js";
@@ -27,6 +31,8 @@ export interface BridgeConnectionEvent {
 export type BridgeConnectionListener = (event: BridgeConnectionEvent) => void;
 
 export interface BridgeConnectionOptions {
+  /** Connect interceptors, run once per logical RPC, outside transport retries. */
+  interceptors?: readonly Interceptor[];
   /** Transparent retries are automatic; configured RPC retries are opt-in. */
   retry?: RetryOptions;
   /** Public ws:// or wss:// bridge endpoint. */
@@ -88,6 +94,10 @@ export function createBridgeConnection(
     },
     options.onStateChange,
     options.retry,
+    {
+      interceptors: options.interceptors,
+      baseUrl: `${options.scheme ?? "http"}://${options.authority ?? options.target ?? "backend"}`,
+    },
   );
 }
 
@@ -133,6 +143,7 @@ export class SharedBridgeConnection {
     // Snapshot configuration; token providers can still refresh credentials.
     this.options = {
       ...options,
+      interceptors: options.interceptors && [...options.interceptors],
       retry: options.retry && structuredClone(options.retry),
     };
   }

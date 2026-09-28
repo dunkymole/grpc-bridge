@@ -54,6 +54,44 @@ The outer tunnel token authenticates the WebSocket. `backendBearerToken` becomes
 inspect or validate that backend metadata. Pass only credentials intended for the
 selected backend.
 
+## Connect interceptors
+
+Use standard Connect interceptors for application metadata, tracing, or logging:
+
+```ts
+import type { Interceptor } from "@connectrpc/connect";
+import { openBridgeConnection } from "@dunkymole/grpc-bridge";
+
+const contractVersion: Interceptor = (next) => async (request) => {
+  request.header.set("x-proto-contract", "demo.echo@1.0.0");
+  return next(request);
+};
+
+const connection = await openBridgeConnection({
+  url: "wss://bridge.example.com/tunnel",
+  target: "echo-service:50051",
+  interceptors: [contractVersion],
+});
+```
+
+`createBridgeConnection()`, `openBridgeConnection()`, and
+`createSharedBridgeConnection()` accept `interceptors?: readonly Interceptor[]`.
+The list is captured when the connection or shared handle is created. Interceptors
+apply to all four RPC shapes in Connect order: requests enter the first listed
+interceptor first, and responses pass back through the chain in reverse order.
+They run once per logical RPC; transparent and configured retries, including
+connection replacement, happen inside the chain and retain its request metadata.
+Interceptors can wrap request/response messages, inspect headers and trailers,
+use call context values, or reject a call. The call signal includes its deadline.
+Omitting the list or passing an empty list preserves the existing transport.
+
+The interceptor request URL identifies the logical backend using `scheme`,
+`authority` (falling back to `target`, then `backend`), and the RPC path.
+Changing interceptor metadata does not change destination selection or the outer
+WebSocket handshake. `backendBearerToken` remains an independent default;
+an `authorization` header supplied by a call or interceptor takes precedence.
+The bridge does not inspect application metadata or interpret contract versions.
+
 ## Explicit connection reuse
 
 One connection already multiplexes many RPCs to one backend. If you own its

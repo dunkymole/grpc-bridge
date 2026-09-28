@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createClient } from "@connectrpc/connect";
+import { createClient, type Interceptor } from "@connectrpc/connect";
 import {
   createSharedBridgeConnection,
+  createBridgeConnection,
   openBridgeConnection,
   type BridgeConnectionEvent,
 } from "../src/index.js";
@@ -10,6 +11,75 @@ import { DemoService } from "../src/gen/demo_pb.js";
 
 const url = process.env.TUNNEL_URL ?? "ws://localhost:8080/tunnel";
 const token = process.env.TUNNEL_TOKEN ?? "";
+
+for (const mode of ["create", "open", "shared"] as const) {
+  test(
+    `${mode} connection honors interceptors for every RPC shape`,
+    { timeout: 10000 },
+    async () => {
+      const calls: string[] = [];
+      const interceptors: Interceptor[] = [
+        (next) => async (req) => {
+          calls.push(req.method.name);
+          req.header.set("x-proto-contract", "demo.echo@1.0.0");
+          const response = await next(req);
+          if (!response.stream)
+            return {
+              ...response,
+              message: { ...response.message, text: "intercepted" },
+            };
+          return response;
+        },
+      ];
+      const options = { url, tunnelToken: token, interceptors };
+      const shared =
+        mode === "shared" ? createSharedBridgeConnection(options) : undefined;
+      // Shared configuration is snapshotted even before its first acquire.
+      if (shared) interceptors.length = 0;
+      const connection = shared
+        ? await shared.acquire()
+        : mode === "open"
+          ? await openBridgeConnection(options)
+          : createBridgeConnection(options);
+      try {
+        if (connection.state !== "open")
+          await new Promise<void>((resolve) => {
+            const unsubscribe = connection.subscribe((event) => {
+              if (event.state === "open") {
+                unsubscribe();
+                resolve();
+              }
+            });
+          });
+        const client = createClient(DemoService, connection.transport);
+        assert.equal(
+          (await client.echo({ text: "original" })).text,
+          "intercepted",
+        );
+        for await (const _ of client.count({ number: 1 })) {
+          /* consume */
+        }
+        await client.collect(
+          (async function* () {
+            yield { number: 1 };
+          })(),
+        );
+        for await (const _ of client.chat(
+          (async function* () {
+            yield { text: "hello" };
+          })(),
+        )) {
+          /* consume */
+        }
+        assert.deepEqual(calls, ["Echo", "Count", "Collect", "Chat"]);
+      } finally {
+        if ("release" in connection) await connection.release();
+        else await connection.close();
+        await shared?.dispose();
+      }
+    },
+  );
+}
 
 test(
   "managed connection resolves providers and reports lifecycle without replay",
