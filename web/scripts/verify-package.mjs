@@ -21,6 +21,8 @@ const entry = await import(
 );
 for (const name of [
   "openBridgeConnection",
+  "createBridgeConnection",
+  "waitForReady",
   "createBridgeConnectionPool",
   "BridgeConnectionPool",
   "openChannel",

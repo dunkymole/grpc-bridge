@@ -115,7 +115,7 @@ test(
     );
     assert.deepEqual(
       events.map((event) => event.state),
-      ["connecting", "closed"],
+      ["connecting", "transient_failure", "closed"],
     );
     assert.equal(events[1]?.reason, "error");
   },

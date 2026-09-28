@@ -10,8 +10,9 @@ const sleep = (ms: number) =>
 export async function openChannel(
   url: string,
   token = "",
-  options: { target?: string } = {},
+  options: { target?: string; signal?: AbortSignal } = {},
 ): Promise<H2Connection> {
+  options.signal?.throwIfAborted();
   const endpoint = new URL(url);
   if (options.target !== undefined)
     endpoint.searchParams.set("target", options.target);
@@ -21,11 +22,19 @@ export async function openChannel(
   );
   ws.binaryType = "arraybuffer";
   await new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      ws.close();
+      reject(new ConnectError("Tunnel opening canceled", Code.Canceled));
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => {
+      options.signal?.removeEventListener("abort", abort);
       ws.close();
       reject(new ConnectError("Tunnel handshake timed out", Code.Unavailable));
     }, 5000);
     ws.onopen = () => {
+      options.signal?.removeEventListener("abort", abort);
       clearTimeout(timer);
       if (ws.protocol !== PROFILE) {
         ws.close();
@@ -35,6 +44,7 @@ export async function openChannel(
       } else resolve();
     };
     ws.onerror = ws.onclose = () => {
+      options.signal?.removeEventListener("abort", abort);
       clearTimeout(timer);
       reject(new ConnectError("Tunnel handshake failed", Code.Unavailable));
     };

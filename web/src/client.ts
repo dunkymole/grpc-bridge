@@ -1,4 +1,5 @@
-import type { Transport } from "@connectrpc/connect";
+import { createContextKey, type Transport } from "@connectrpc/connect";
+import { RecoveringConnection } from "./recovery.js";
 import { openChannel } from "./channel.js";
 import { createTunnelTransport } from "./transport.js";
 
@@ -7,7 +8,14 @@ export type TokenProvider = () =>
   | undefined
   | Promise<string | undefined>;
 export type TokenSource = string | TokenProvider;
-export type BridgeConnectionState = "connecting" | "open" | "closed";
+export type BridgeConnectionState =
+  | "connecting"
+  | "open"
+  | "transient_failure"
+  | "closed";
+
+/** Per-RPC option: wait for connectivity, respecting cancellation and deadline. */
+export const waitForReady = createContextKey(false);
 
 export interface BridgeConnectionEvent {
   state: BridgeConnectionState;
@@ -46,84 +54,46 @@ async function resolveToken(source?: TokenSource): Promise<string | undefined> {
   return typeof source === "function" ? await source() : source;
 }
 
-class ManagedBridgeConnection implements BridgeConnection {
-  readonly transport: Transport;
-  readonly closed: Promise<void>;
-  private currentState: BridgeConnectionState = "open";
-  private closeRequested = false;
-  private readonly listeners = new Set<BridgeConnectionListener>();
-
-  constructor(
-    private readonly channel: Awaited<ReturnType<typeof openChannel>>,
-    transportOptions: Parameters<typeof createTunnelTransport>[1],
-    initialListener?: BridgeConnectionListener,
-  ) {
-    if (initialListener) this.listeners.add(initialListener);
-    this.transport = createTunnelTransport(channel, transportOptions);
-    this.closed = channel.closed.then(
-      () => this.transition("closed", this.closeRequested ? "local" : "remote"),
-      (error) => this.transition("closed", "error", error),
-    );
-  }
-
-  get state(): BridgeConnectionState {
-    return this.currentState;
-  }
-
-  subscribe(listener: BridgeConnectionListener): () => void {
-    this.listeners.add(listener);
-    listener({ state: this.currentState });
-    return () => this.listeners.delete(listener);
-  }
-
-  async close(): Promise<void> {
-    if (this.currentState === "closed") return;
-    this.closeRequested = true;
-    await this.channel.close();
-    await this.closed;
-  }
-
-  private transition(
-    state: BridgeConnectionState,
-    reason?: BridgeConnectionEvent["reason"],
-    error?: unknown,
-  ): void {
-    if (this.currentState === state) return;
-    this.currentState = state;
-    const event = { state, reason, error };
-    for (const listener of this.listeners) listener(event);
-  }
-}
-
-/**
- * Opens one WebSocket carrying one HTTP/2 session. It never reconnects, retries,
- * or replays an RPC. Token providers are called once for this new channel.
- */
-export async function openBridgeConnection(
+/** Create a durable channel immediately, including while the backend is unavailable. */
+export function createBridgeConnection(
   options: BridgeConnectionOptions,
-): Promise<BridgeConnection> {
-  options.onStateChange?.({ state: "connecting" });
-  try {
+): BridgeConnection {
+  return new RecoveringConnection(async (signal) => {
     const [tunnelToken, backendBearerToken] = await Promise.all([
       resolveToken(options.tunnelToken),
       resolveToken(options.backendBearerToken),
     ]);
+    signal.throwIfAborted();
     const channel = await openChannel(options.url, tunnelToken ?? "", {
       target: options.target,
+      signal,
     });
-    const connection = new ManagedBridgeConnection(
-      channel,
-      {
-        bearerToken: backendBearerToken,
-        authority: options.authority ?? options.target ?? "backend",
-        scheme: options.scheme,
-      },
-      options.onStateChange,
-    );
-    options.onStateChange?.({ state: "open" });
+    try {
+      return {
+        channel,
+        transport: createTunnelTransport(channel, {
+          bearerToken: backendBearerToken,
+          authority: options.authority ?? options.target ?? "backend",
+          scheme: options.scheme,
+        }),
+      };
+    } catch (error) {
+      await channel.close();
+      throw error;
+    }
+  }, options.onStateChange);
+}
+
+/** Await the initial connection attempt; subsequent transport loss heals automatically. */
+export async function openBridgeConnection(
+  options: BridgeConnectionOptions,
+): Promise<BridgeConnection> {
+  const connection = createBridgeConnection(options) as RecoveringConnection;
+  try {
+    await connection.initial;
     return connection;
   } catch (error) {
-    options.onStateChange?.({ state: "closed", reason: "error", error });
+    await connection.close();
     throw error;
   }
 }
@@ -148,6 +118,7 @@ export interface BridgeConnectionLease {
 interface PoolEntry {
   references: number;
   connection: Promise<BridgeConnection>;
+  channel: BridgeConnection;
 }
 
 /** Explicit, reference-counted reuse. Idle entries are closed, not cached. */
@@ -164,7 +135,15 @@ export class BridgeConnectionPool {
     const key = poolKey(options);
     let entry = this.entries.get(key);
     if (!entry) {
-      entry = { references: 0, connection: openBridgeConnection(options) };
+      const channel = createBridgeConnection(options) as RecoveringConnection;
+      const ready = channel.initial.then(
+        () => channel,
+        async (error) => {
+          await channel.close();
+          throw error;
+        },
+      );
+      entry = { references: 0, connection: ready, channel };
       this.entries.set(key, entry);
       void entry.connection.then(
         (connection) =>
@@ -180,6 +159,7 @@ export class BridgeConnectionPool {
     let connection: BridgeConnection;
     try {
       connection = await entry.connection;
+      if (this.closed) throw new Error("Bridge connection pool is closed");
     } catch (error) {
       entry.references--;
       throw error;
@@ -209,9 +189,7 @@ export class BridgeConnectionPool {
     this.closed = true;
     const entries = [...this.entries.values()];
     this.entries.clear();
-    await Promise.allSettled(
-      entries.map(async (entry) => (await entry.connection).close()),
-    );
+    await Promise.allSettled(entries.map((entry) => entry.channel.close()));
   }
 }
 

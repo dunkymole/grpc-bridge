@@ -56,6 +56,13 @@ button("connect").onclick = async () => {
     enabled(true);
     el("status").textContent = "Connected · one HTTP/2 session";
     const current = connection;
+    current.subscribe(({ state }) => {
+      if (connection !== current || state === "closed") return;
+      el("status").textContent =
+        state === "open"
+          ? "Connected · one HTTP/2 session"
+          : "Connection interrupted · reconnecting…";
+    });
     void current.closed.then(() => {
       if (connection === current) {
         enabled(false);

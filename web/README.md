@@ -39,9 +39,10 @@ console.log(reply.message);
 await connection.close();
 ```
 
-Token providers are awaited once before each new channel. A provider is called
-again only when the application explicitly opens another connection. The package
-does not reconnect, retry, resume, or replay RPCs.
+The connection is a long-lived channel: existing typed clients keep working after
+its underlying WebSocket/HTTP/2 session is replaced. Token providers are awaited
+before every connection attempt, including automatic reconnection. Use providers
+when credentials can change. In-flight RPCs are never retried or replayed.
 
 The outer tunnel token authenticates the WebSocket. `backendBearerToken` becomes
 `authorization: Bearer <token>` inside each gRPC request. The bridge does not
@@ -85,14 +86,61 @@ Idle connections are closed rather than cached.
 
 ## Lifecycle and cleanup
 
-States are `connecting`, `open`, and `closed`. Pass `onStateChange` to observe the
-complete opening lifecycle. `connection.subscribe()` immediately reports the
-current state and returns an unsubscribe function. A closed event reports `local`,
-`remote`, or `error` where it is known.
+States are `connecting`, `open`, `transient_failure`, and `closed`. Transport loss
+enters `transient_failure`, followed by automatic connection attempts with jittered
+exponential backoff (1 second initially, multiplied by 1.6, capped at 30 seconds
+before ±20% jitter). Successful establishment resets backoff. `closed` is terminal
+and means explicit shutdown; `connection.closed` resolves only after shutdown.
+Pool leases remain attached to the same channel throughout recovery.
+
+Pass `onStateChange` to observe the complete opening lifecycle.
+`connection.subscribe()` immediately reports the current state and returns an
+unsubscribe function. Observer exceptions do not interrupt channel management.
+
+`openBridgeConnection()` waits for its first connection attempt and rejects if
+that attempt fails, disposing the channel. Use `createBridgeConnection()` instead
+to obtain a channel immediately that also recovers from an initial outage:
+
+```ts
+import { createClient, createContextValues } from "@connectrpc/connect";
+import { createBridgeConnection, waitForReady } from "@dunkymole/grpc-bridge";
+import { Greeter } from "./gen/greeter_pb.js";
+
+const connection = createBridgeConnection({
+  url: "wss://bridge.example.com/tunnel",
+  target: "greeter.internal:443",
+});
+const client = createClient(Greeter, connection.transport);
+try {
+  const reply = await client.sayHello(
+    { name: "Ada" },
+    {
+      timeoutMs: 5000,
+      contextValues: createContextValues().set(waitForReady, true),
+    },
+  );
+  console.log(reply.message);
+} finally {
+  await connection.close();
+}
+```
+
+By default, calls wait during `connecting` but fail with `Unavailable` when the
+channel enters `transient_failure`. Per-call `waitForReady` keeps an undispatched
+call waiting across failed attempts. Cancellation and the original deadline apply
+to both waiting and execution. Streaming inputs are not consumed while waiting.
+Set a deadline to bound the wait. Closing the channel rejects waiting calls,
+aborts connection establishment, and stops future reconnect attempts.
 
 Always call `connection.close()`, release every pool lease, or close the pool. A
-dropped channel fails active RPCs with a transport error. The application decides
-whether an operation is safe to retry.
+dropped transport fails active RPCs with a transport error; established streams
+cannot resume. The application decides whether an operation is safe to retry.
+Reconnection and wait-for-ready follow native gRPC channel behavior, but this
+client does not implement gRPC transparent retries, retry policies, load balancing,
+or stream resumption. Graceful HTTP/2 GOAWAY migration is also not implemented:
+recovery currently starts when the underlying session closes, not when a peer
+announces that it will stop accepting new streams. The low-level `openChannel()`
+remains a single session.
 
 ## Low-level API
 
@@ -114,7 +162,7 @@ a 1 MiB receive queue and sends in 16 KiB chunks.
 The package is ESM-only and side-effect free. It ships JavaScript, TypeScript
 declarations, declaration maps, source maps with embedded sources, the MIT license,
 and third-party notices. A production browser bundle including runtime dependencies
-is 63.9 kB minified and 20.2 kB gzip. Run `npm run size` to reproduce the bundle
+is 66.6 kB minified and 20.8 kB gzip. Run `npm run size` to reproduce the bundle
 measurement. Demo UI and generated demo protobuf code are excluded.
 
 ## Examples

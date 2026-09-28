@@ -1,6 +1,8 @@
 export {
   BridgeConnectionPool,
   createBridgeConnectionPool,
+  createBridgeConnection,
+  waitForReady,
   openBridgeConnection,
   type BridgeConnection,
   type BridgeConnectionEvent,

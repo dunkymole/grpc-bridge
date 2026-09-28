@@ -60,7 +60,8 @@ Removing a destination blocks new connections but does not close existing ones.
 
 `openBridgeConnection({ url, target, tunnelToken })` controls the outer tunnel.
 An omitted or empty `target` uses the default backend. `tunnelToken` can be a
-string or an async provider. It is resolved once for each new connection and is
+string or an async provider. It is resolved before each transport connection
+attempt, including automatic reconnection, and is
 offered as `auth.<token>` in the WebSocket subprotocol list, never in the URL.
 
 `backendBearerToken` optionally adds
@@ -109,6 +110,12 @@ authorization metadata. The demo Python service does not enforce authentication.
 Forwarding a JWT as backend metadata does not add JWT verification to the bridge.
 
 ## Example runner environment
+
+Managed client channels automatically reconnect with a 1-second initial delay,
+a 1.6 multiplier, a 30-second cap, and ±20% jitter applied after the cap. These
+backoff values are fixed. `waitForReady` is a per-RPC Connect context option, off
+by default; RPC `timeoutMs` and `signal` cover both waiting and execution.
+See the [client recovery guide](../web/README.md#lifecycle-and-cleanup).
 
 | Variable               | Default                      | Meaning                                                          |
 | ---------------------- | ---------------------------- | ---------------------------------------------------------------- |
