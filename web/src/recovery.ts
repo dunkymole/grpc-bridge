@@ -1,5 +1,6 @@
 import { Code, ConnectError, type Transport } from "@connectrpc/connect";
 import { RetryingTransport, type RetryOptions } from "./retry.js";
+import { interceptTransport, type InterceptorOptions } from "./interceptors.js";
 import {
   waitForReady,
   type BridgeConnection,
@@ -38,6 +39,7 @@ export class RecoveringConnection implements BridgeConnection {
     private readonly dial: (signal: AbortSignal) => Promise<Session>,
     listener?: BridgeConnectionListener,
     retry?: RetryOptions,
+    interceptorOptions?: InterceptorOptions,
   ) {
     this.closed = new Promise((resolve) => {
       this.finish = resolve;
@@ -89,6 +91,8 @@ export class RecoveringConnection implements BridgeConnection {
       this.stopped.signal,
       retry,
     ).transport;
+    if (interceptorOptions)
+      this.transport = interceptTransport(this.transport, interceptorOptions);
     // Allow callers to receive the object before lifecycle callbacks run.
     queueMicrotask(() => {
       if (!this.stopped.signal.aborted) void this.connect();

@@ -12,7 +12,12 @@ import {
 } from "node:http2";
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { Client, credentials } from "@grpc/grpc-js";
-import { Code, ConnectError, createClient } from "@connectrpc/connect";
+import {
+  Code,
+  ConnectError,
+  createClient,
+  type Interceptor,
+} from "@connectrpc/connect";
 import { H2Connection } from "../src/h2/connection.js";
 import { createTunnelTransport } from "../src/transport.js";
 import { RecoveringConnection } from "../src/recovery.js";
@@ -57,6 +62,7 @@ async function fixture(
     drop: () => void,
   ) => void,
   retry?: RetryOptions,
+  interceptors?: readonly Interceptor[],
 ) {
   const server = createServer();
   const sockets = new Map<number, Socket>();
@@ -95,6 +101,7 @@ async function fixture(
     },
     undefined,
     retry,
+    { interceptors, baseUrl: "http://backend" },
   );
   await connection.initial;
   return {
@@ -114,6 +121,125 @@ async function fixture(
     },
   };
 }
+
+test("interceptor metadata reaches all RPC shapes in declaration order", async () => {
+  const seen: IncomingHttpHeaders[] = [];
+  const events: string[] = [];
+  const first: Interceptor = (next) => async (req) => {
+    events.push(`first:${req.method.name}`);
+    assert.equal(
+      req.url,
+      `http://backend/${DemoService.typeName}/${req.method.name}`,
+    );
+    assert.equal(req.requestMethod, "POST");
+    req.header.set("x-proto-contract", "demo.echo@1.0.0");
+    const response = await next(req);
+    events.push(`last:${req.method.name}`);
+    return response;
+  };
+  const second: Interceptor = (next) => async (req) => {
+    events.push(`second:${req.method.name}`);
+    assert.equal(req.header.get("x-proto-contract"), "demo.echo@1.0.0");
+    return next(req);
+  };
+  const f = await fixture(
+    (stream, headers) => {
+      seen.push(headers);
+      success(stream);
+    },
+    undefined,
+    [first, second],
+  );
+  try {
+    await f.client.echo({});
+    for await (const _ of f.client.count({})) {
+      /* consume trailers */
+    }
+    await f.client.collect(
+      (async function* () {
+        yield {};
+      })(),
+    );
+    for await (const _ of f.client.chat(
+      (async function* () {
+        yield {};
+      })(),
+    )) {
+      /* consume trailers */
+    }
+    assert.equal(seen.length, 4);
+    assert.ok(seen.every((h) => h["x-proto-contract"] === "demo.echo@1.0.0"));
+    assert.deepEqual(
+      events,
+      ["Echo", "Count", "Collect", "Chat"].flatMap((name) => [
+        `first:${name}`,
+        `second:${name}`,
+        `last:${name}`,
+      ]),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("interceptors run once and retain metadata across GOAWAY replacement", async () => {
+  let invocations = 0;
+  const seen: IncomingHttpHeaders[] = [];
+  const metadata: Interceptor = (next) => async (req) => {
+    req.header.set("x-logical-call", String(++invocations));
+    return next(req);
+  };
+  const f = await fixture(
+    (stream, headers, n) => {
+      seen.push(headers);
+      n === 2 ? stream.session!.goaway(0, 1) : success(stream);
+    },
+    undefined,
+    [metadata],
+  );
+  try {
+    await f.client.echo({}, { timeoutMs: 1000 });
+    await f.client.echo({}, { timeoutMs: 2000 });
+    assert.equal(invocations, 2);
+    assert.equal(f.connections, 2);
+    assert.deepEqual(
+      seen.map((h) => h["x-logical-call"]),
+      ["1", "2", "2"],
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("configured streaming retries keep interceptor metadata and run once", async () => {
+  let invocations = 0;
+  const seen: IncomingHttpHeaders[] = [];
+  const f = await fixture(
+    (stream, headers, n) => {
+      seen.push(headers);
+      n === 1 ? status(stream) : success(stream);
+    },
+    { policy },
+    [
+      (next) => async (req) => {
+        req.header.set("x-logical-call", String(++invocations));
+        return next(req);
+      },
+    ],
+  );
+  try {
+    for await (const _ of f.client.count({}, { timeoutMs: 1000 })) {
+      /* consume */
+    }
+    assert.equal(invocations, 1);
+    assert.deepEqual(
+      seen.map((h) => h["x-logical-call"]),
+      ["1", "1"],
+    );
+  } finally {
+    await f.close();
+  }
+});
 
 test(
   "REFUSED_STREAM is retried once, without configured-attempt metadata",
