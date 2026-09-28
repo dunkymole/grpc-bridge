@@ -24,6 +24,7 @@ import { RecoveringConnection } from "../src/recovery.js";
 import { type RetryOptions, type RetryPolicy } from "../src/retry.js";
 import { DemoService, MessageSchema } from "../src/gen/demo_pb.js";
 import { frame } from "../src/framing.js";
+import { interceptTransport } from "../src/index.js";
 
 const policy: RetryPolicy = {
   maxAttempts: 3,
@@ -120,6 +121,172 @@ async function fixture(
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
+}
+
+test("client chains isolate concurrent metadata on one connection for every RPC shape", async () => {
+  const seen: IncomingHttpHeaders[] = [];
+  const events = new Map<string, string[]>();
+  const record = (id: string, event: string) => {
+    const list = events.get(id) ?? [];
+    list.push(event);
+    events.set(id, list);
+  };
+  const shared: Interceptor = (next) => async (req) => {
+    const id = req.header.get("x-call") ?? "plain";
+    record(id, "connection-in");
+    req.header.set("x-precedence", "connection");
+    const response = await next(req);
+    record(id, "connection-out");
+    return response;
+  };
+  const f = await fixture(
+    (stream, headers) => {
+      seen.push(headers);
+      success(stream);
+    },
+    undefined,
+    [shared],
+  );
+  const original = f.connection.transport;
+  const client = (contract: string) =>
+    createClient(
+      DemoService,
+      interceptTransport(original, {
+        baseUrl: "http://backend",
+        interceptors: [
+          (next) => async (req) => {
+            const id = `${contract}:${req.method.name}`;
+            record(id, "client-first-in");
+            req.header.set("x-call", id);
+            req.header.set("x-proto-contract", contract);
+            req.header.set("x-precedence", "client");
+            await Promise.resolve();
+            const response = await next(req);
+            record(id, "client-first-out");
+            return response;
+          },
+          (next) => async (req) => {
+            const id = req.header.get("x-call")!;
+            record(id, "client-second-in");
+            assert.equal(req.header.get("x-proto-contract"), contract);
+            const response = await next(req);
+            record(id, "client-second-out");
+            return response;
+          },
+        ],
+      }),
+    );
+  const headers = new Headers({ "x-precedence": "call" });
+  const consume = async (messages: AsyncIterable<unknown>) => {
+    for await (const _ of messages) {
+      /* consume */
+    }
+  };
+  try {
+    const clients = [client("demo.echo@1.0.0"), client("example.orders@2.3.0")];
+    assert.strictEqual(f.connection.transport, original);
+    await Promise.all(
+      clients.flatMap((c) => [
+        c.echo({}, { headers }),
+        consume(c.count({}, { headers })),
+        c.collect(
+          (async function* () {
+            yield {};
+          })(),
+          { headers },
+        ),
+        consume(
+          c.chat(
+            (async function* () {
+              yield {};
+            })(),
+            { headers },
+          ),
+        ),
+      ]),
+    );
+    assert.equal(seen.length, 8);
+    for (const h of seen) {
+      const id = String(h["x-call"]);
+      assert.equal(h["x-proto-contract"], id.split(":")[0]);
+      assert.equal(h["x-precedence"], "connection");
+      assert.deepEqual(events.get(id), [
+        "client-first-in",
+        "client-second-in",
+        "connection-in",
+        "connection-out",
+        "client-second-out",
+        "client-first-out",
+      ]);
+    }
+    await f.client.echo({}, { headers });
+    assert.equal(seen.at(-1)!["x-proto-contract"], undefined);
+    assert.equal(headers.get("x-precedence"), "call");
+    assert.equal(headers.get("x-proto-contract"), null);
+    assert.equal(f.connections, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const scenario of ["replacement", "configured-stream"] as const) {
+  test(`client and connection chains run once across ${scenario} retries`, async () => {
+    let clientCalls = 0,
+      connectionCalls = 0;
+    const seen: IncomingHttpHeaders[] = [];
+    const f = await fixture(
+      (stream, headers, n) => {
+        seen.push(headers);
+        if (n === 2) {
+          if (scenario === "replacement") stream.session!.goaway(0, 1);
+          else status(stream);
+        } else success(stream);
+      },
+      scenario === "configured-stream" ? { policy } : undefined,
+      [
+        (next) => async (req) => {
+          req.header.set("x-connection-call", String(++connectionCalls));
+          return next(req);
+        },
+      ],
+    );
+    const client = createClient(
+      DemoService,
+      interceptTransport(f.connection.transport, {
+        baseUrl: "http://backend",
+        interceptors: [
+          (next) => async (req) => {
+            clientCalls++;
+            req.header.set("x-proto-contract", "demo.echo@1.0.0");
+            return next(req);
+          },
+        ],
+      }),
+    );
+    try {
+      await f.client.echo({});
+      if (scenario === "replacement")
+        await client.echo({}, { timeoutMs: 2000 });
+      else
+        for await (const _ of client.count({}, { timeoutMs: 2000 })) {
+          /* consume */
+        }
+      assert.equal(clientCalls, 1);
+      assert.equal(connectionCalls, 2);
+      assert.equal(f.calls, 3);
+      assert.equal(f.connections, scenario === "replacement" ? 2 : 1);
+      assert.deepEqual(
+        seen.map((h) => h["x-proto-contract"]),
+        [undefined, "demo.echo@1.0.0", "demo.echo@1.0.0"],
+      );
+      assert.deepEqual(
+        seen.map((h) => h["x-connection-call"]),
+        ["1", "2", "2"],
+      );
+    } finally {
+      await f.close();
+    }
+  });
 }
 
 test("interceptor metadata reaches all RPC shapes in declaration order", async () => {

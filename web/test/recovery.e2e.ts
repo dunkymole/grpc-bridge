@@ -6,7 +6,11 @@ import {
   createClient,
   createContextValues,
 } from "@connectrpc/connect";
-import { createSharedBridgeConnection, waitForReady } from "../src/index.js";
+import {
+  createSharedBridgeConnection,
+  interceptTransport,
+  waitForReady,
+} from "../src/index.js";
 import { DemoService } from "../src/gen/demo_pb.js";
 
 test(
@@ -23,6 +27,7 @@ test(
     };
     let shared: ReturnType<typeof createSharedBridgeConnection> | undefined;
     let tokens = 0;
+    let clientCalls = 0;
     try {
       const options = {
         url: process.env.TUNNEL_URL ?? "ws://localhost:8080/tunnel",
@@ -34,7 +39,19 @@ test(
       shared = createSharedBridgeConnection(options);
       const first = await shared.acquire();
       const second = await shared.acquire();
-      const client = createClient(DemoService, first.transport);
+      const client = createClient(
+        DemoService,
+        interceptTransport(first.transport, {
+          baseUrl: "http://backend",
+          interceptors: [
+            (next) => async (req) => {
+              clientCalls++;
+              req.header.set("x-proto-contract", "demo.echo@1.0.0");
+              return next(req);
+            },
+          ],
+        }),
+      );
       const stream = client
         .count({ number: 100, delayMs: 100 })
         [Symbol.asyncIterator]();
@@ -58,6 +75,7 @@ test(
       );
       assert.equal(reply.text, "same client recovered");
       assert.equal(tokens, 2);
+      assert.equal(clientCalls, 2);
       assert.equal(sockets.length, 2);
       assert.equal(second.state, "open");
       await second.release();

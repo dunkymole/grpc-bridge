@@ -6,18 +6,25 @@ import {
 import { runStreamingCall, runUnaryCall } from "@connectrpc/connect/protocol";
 
 export interface InterceptorOptions {
+  /** Captured in declaration order when the wrapper is created. */
   interceptors?: readonly Interceptor[];
-  /** Logical backend URL, independent of the WebSocket endpoint. */
+  /** Logical backend URL for interceptor requests; does not change routing. */
   baseUrl: string;
 }
 
-/** Wrap the logical RPC, outside connection selection and all wire attempts. */
+/**
+ * Create a client-scoped Connect transport without opening or owning a connection.
+ * Wrap a BridgeConnection or lease's transport to run outside its connection-level
+ * interceptors and retries. Calls get independent Headers; the source is unchanged.
+ * Closing/releasing the underlying connection remains the caller's responsibility.
+ */
 export function interceptTransport(
   transport: Transport,
   options: InterceptorOptions,
 ): Transport {
   if (!options.interceptors?.length) return transport;
   const interceptors = [...options.interceptors];
+  const baseUrl = options.baseUrl.replace(/\/+$/, "");
   return {
     unary(method, signal, timeoutMs, header, message, contextValues) {
       const deadline =
@@ -31,7 +38,7 @@ export function interceptTransport(
           method,
           service: method.parent,
           requestMethod: "POST",
-          url: `${options.baseUrl}/${method.parent.typeName}/${method.name}`,
+          url: `${baseUrl}/${method.parent.typeName}/${method.name}`,
           header: new Headers(header),
           message,
           contextValues: contextValues ?? createContextValues(),
@@ -61,7 +68,7 @@ export function interceptTransport(
           method,
           service: method.parent,
           requestMethod: "POST",
-          url: `${options.baseUrl}/${method.parent.typeName}/${method.name}`,
+          url: `${baseUrl}/${method.parent.typeName}/${method.name}`,
           header: new Headers(header),
           message,
           contextValues: contextValues ?? createContextValues(),
