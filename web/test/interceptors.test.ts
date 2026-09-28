@@ -8,8 +8,9 @@ import {
   createContextKey,
   createContextValues,
   type Transport,
+  type Interceptor,
 } from "@connectrpc/connect";
-import { interceptTransport } from "../src/interceptors.js";
+import { interceptTransport } from "../src/index.js";
 import { DemoService, MessageSchema } from "../src/gen/demo_pb.js";
 
 const direct: Transport = {
@@ -52,6 +53,31 @@ test("omitted and empty interceptors preserve transport identity", () => {
   assert.equal(
     interceptTransport(direct, { baseUrl: "http://backend", interceptors: [] }),
     direct,
+  );
+});
+
+test("wrapper snapshots options and trims trailing URL slashes", async () => {
+  const urls: string[] = [];
+  const interceptor: Interceptor = (next) => async (req) => {
+    urls.push(req.url);
+    return next(req);
+  };
+  const options = {
+    baseUrl: "https://service.internal/",
+    interceptors: [interceptor],
+  };
+  const client = createClient(DemoService, interceptTransport(direct, options));
+  options.baseUrl = "http://changed";
+  options.interceptors.length = 0;
+  await client.echo({});
+  for await (const _ of client.count({})) {
+    /* consume */
+  }
+  assert.deepEqual(
+    urls,
+    ["Echo", "Count"].map(
+      (name) => `https://service.internal/${DemoService.typeName}/${name}`,
+    ),
   );
 });
 

@@ -27,6 +27,7 @@ for (const name of [
   "SharedBridgeConnection",
   "openChannel",
   "createTunnelTransport",
+  "interceptTransport",
   "inputQueue",
 ]) {
   if (!(name in entry)) throw new Error(`Missing package export: ${name}`);
@@ -34,9 +35,12 @@ for (const name of [
 
 const declaration = await readFile("package-dist/index.d.ts", "utf8");
 if (
-  !["BridgeConnectionOptions", "RetryOptions", "RetryPolicy"].every((name) =>
-    declaration.includes(name),
-  )
+  ![
+    "BridgeConnectionOptions",
+    "InterceptorOptions",
+    "RetryOptions",
+    "RetryPolicy",
+  ].every((name) => declaration.includes(name))
 ) {
   throw new Error("Public declarations were not emitted");
 }

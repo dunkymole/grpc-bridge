@@ -92,6 +92,118 @@ WebSocket handshake. `backendBearerToken` remains an independent default;
 an `authorization` header supplied by a call or interceptor takes precedence.
 The bridge does not inspect application metadata or interpret contract versions.
 
+### Per-client interceptors on a shared connection
+
+Use the public `interceptTransport(transport, options)` helper when metadata belongs
+to one generated client. Connection-level interceptors remain available for shared
+concerns such as authentication or tracing. For example, a backend serving both
+Echo and Orders can share one connection while each client sends its own contract.
+This example assumes your generated services provide `echo({ text })` and
+`getOrder({ id })`; use the methods and messages from your own schemas:
+
+```ts
+import { createClient, type Interceptor } from "@connectrpc/connect";
+import {
+  createSharedBridgeConnection,
+  interceptTransport,
+} from "@dunkymole/grpc-bridge";
+import { EchoService } from "./gen/echo_pb.js";
+import { OrdersService } from "./gen/orders_pb.js";
+
+const contractVersion = (contract: string): Interceptor => (next) => async (req) => {
+  req.header.set("x-proto-contract", contract);
+  return next(req);
+};
+const tracing: Interceptor = (next) => async (req) => {
+  req.header.set("x-request-id", crypto.randomUUID());
+  return next(req);
+};
+
+const shared = createSharedBridgeConnection({
+  url: "wss://bridge.example.com/tunnel",
+  target: "services:50051",
+  interceptors: [tracing],
+});
+const [echoLease, ordersLease] = await Promise.all([
+  shared.acquire(),
+  shared.acquire(),
+]);
+try {
+  const echo = createClient(EchoService, interceptTransport(echoLease.transport, {
+    baseUrl: "http://services:50051",
+    interceptors: [contractVersion("demo.echo@1.0.0")],
+  }));
+  const orders = createClient(OrdersService, interceptTransport(ordersLease.transport, {
+    baseUrl: "http://services:50051",
+    interceptors: [contractVersion("example.orders@2.3.0")],
+  }));
+  const [reply, order] = await Promise.all([
+    echo.echo({ text: "hello" }),
+    orders.getOrder({ id: "order-123" }),
+  ]);
+  console.log(reply, order);
+  // The calls share one connection and send different x-proto-contract values.
+} finally {
+  await Promise.all([echoLease.release(), ordersLease.release()]);
+  await shared.dispose();
+}
+```
+
+The helper accepts a standard Connect `Transport` and `InterceptorOptions` with
+`baseUrl: string` and `interceptors?: readonly Interceptor[]`. It captures its
+options when created. `baseUrl` supplies the logical URL visible to that client’s
+interceptors; use the backend scheme and authority, without the RPC path. It does
+not select a destination, open a WebSocket, or modify the wrapped transport.
+An omitted or empty interceptor list returns the original transport.
+
+Requests flow through the per-client interceptors in declaration order, then the
+connection-level interceptors in declaration order, then connection selection and
+retries. Responses unwind in reverse order. All four RPC shapes follow this order.
+Both chains run once per logical call, even when a retry replaces the connection;
+the final request metadata is retained on every attempt.
+
+Each call starts with a fresh copy of its headers, so concurrent clients and the
+original transport do not inherit another client’s changes. For the same header,
+the last `header.set()` wins: client interceptors can replace per-call values, and
+connection interceptors can replace client values. To provide a shared default
+that a client can override, set it only when `req.header.has(name)` is false.
+`header.append()` retains the normal `Headers` append behavior. The independent
+`backendBearerToken` fallback is applied only when `authorization` remains absent.
+
+For example, this connection-level interceptor provides a default while honoring
+a client-specific value. Add `clientName` to a client wrapper's interceptor list,
+and `defaults` to the connection's list:
+
+```ts
+import type { Interceptor } from "@connectrpc/connect";
+
+const defaults: Interceptor = (next) => async (req) => {
+  if (!req.header.has("x-client-name")) {
+    req.header.set("x-client-name", "shared-default");
+  }
+  return next(req);
+};
+const clientName: Interceptor = (next) => async (req) => {
+  req.header.set("x-client-name", "orders-ui");
+  return next(req);
+};
+// The wrapped client sends orders-ui; unwrapped clients send shared-default.
+// An unconditional set() in defaults would replace the client's value instead.
+```
+
+A wrapper owns no lease and exposes no additional lifecycle. Keep its underlying
+connection or lease alive while using it, and stop using it when that lease is
+released. Creating a wrapper neither acquires nor releases a lease. Cancellation,
+deadlines (including time in both chains), connection recovery, and the last-lease
+shutdown retain their existing behavior. Wrap the managed connection or lease’s
+transport to keep client interceptors outside its retry layer.
+
+For an executable version using the repository's generated `DemoService`, see
+[`examples/interceptors.ts`](examples/interceptors.ts). With the Compose stack
+running, run `npm run example` from `web/`. It creates two clients with distinct
+contract metadata, runs concurrent calls over shared leases, and releases them.
+The Python demo echoes messages but does not validate contract versions.
+
 ## Explicit connection reuse
 
 One connection already multiplexes many RPCs to one backend. If you own its

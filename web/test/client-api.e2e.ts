@@ -5,12 +5,91 @@ import {
   createSharedBridgeConnection,
   createBridgeConnection,
   openBridgeConnection,
+  interceptTransport,
   type BridgeConnectionEvent,
 } from "../src/index.js";
 import { DemoService } from "../src/gen/demo_pb.js";
+import { runChecks } from "../src/verify.js";
 
 const url = process.env.TUNNEL_URL ?? "ws://localhost:8080/tunnel";
 const token = process.env.TUNNEL_TOKEN ?? "";
+
+test(
+  "client wrappers share leases without changing lifecycle, deadlines, or cancellation",
+  { timeout: 15000 },
+  async () => {
+    let opens = 0;
+    const observed = new Map<string, Set<string>>();
+    const shared = createSharedBridgeConnection({
+      url,
+      tunnelToken: () => {
+        opens++;
+        return token;
+      },
+      interceptors: [
+        (next) => async (req) => {
+          const contract = req.header.get("x-proto-contract")!;
+          const methods = observed.get(contract) ?? new Set<string>();
+          methods.add(req.method.name);
+          observed.set(contract, methods);
+          return next(req);
+        },
+      ],
+    });
+    try {
+      const [first, second] = await Promise.all([
+        shared.acquire(),
+        shared.acquire(),
+      ]);
+      const wrap = (transport: typeof first.transport, contract: string) =>
+        createClient(
+          DemoService,
+          interceptTransport(transport, {
+            baseUrl: "http://backend",
+            interceptors: [
+              (next) => async (req) => {
+                req.header.set("x-proto-contract", contract);
+                return next(req);
+              },
+            ],
+          }),
+        );
+      const echo = wrap(first.transport, "demo.echo@1.0.0");
+      const orders = wrap(second.transport, "example.orders@2.3.0");
+      assert.strictEqual(first.transport, second.transport);
+      assert.equal(opens, 1);
+      // The interoperability checks include all shapes, deadlines, cancellation,
+      // concurrent RPCs, trailers, and a large message on both client wrappers.
+      await Promise.all([
+        runChecks(echo, () => {}),
+        runChecks(orders, () => {}),
+      ]);
+      assert.deepEqual([...observed.keys()].sort(), [
+        "demo.echo@1.0.0",
+        "example.orders@2.3.0",
+      ]);
+      for (const methods of observed.values())
+        assert.deepEqual([...methods].sort(), [
+          "Chat",
+          "Collect",
+          "Count",
+          "Echo",
+        ]);
+      await first.release();
+      assert.equal(second.state, "open");
+      assert.equal(
+        (await orders.echo({ text: "still open" })).text,
+        "still open",
+      );
+      assert.equal(opens, 1);
+      await second.release();
+      await second.closed;
+      assert.equal(second.state, "closed");
+    } finally {
+      await shared.dispose();
+    }
+  },
+);
 
 for (const mode of ["create", "open", "shared"] as const) {
   test(
