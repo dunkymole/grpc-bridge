@@ -50,6 +50,8 @@ Compose network; it exposes no host port. No API keys or cloud services required
 
 - Unary, server-streaming, client-streaming, and genuinely full-duplex bidi RPCs.
 - Standard Protobuf-ES generated schemas and Connect's `createClient()` facade.
+- Standard Connect interceptors at connection and per-client scope, with isolated
+  metadata for clients sharing one connection.
 - One shared HTTP/2 connection, with concurrent streams and native trailers.
 - Cancellation, deadlines, request half-close, explicit connection failure.
 - Incremental gRPC parsing; 1 MiB message limit; awaitable input producers.
@@ -112,6 +114,54 @@ automatically for future calls. They support transparent retries, GOAWAY drainin
 and opt-in configured retries with bounded request buffering.
 See the [retry contract and TypeScript example](web/RETRIES.md) and
 [recovery and wait-for-ready guide](web/README.md#lifecycle-and-cleanup).
+
+### Connect interceptors
+
+Use connection-level `interceptors` for shared concerns such as request IDs,
+authentication, or logging. Use `interceptTransport()` for metadata or behavior
+specific to one generated client. Both scopes compose over the same connection:
+
+```ts
+import { createClient, type Interceptor } from "@connectrpc/connect";
+import { openBridgeConnection, interceptTransport } from "@dunkymole/grpc-bridge";
+import { DemoService } from "./gen/demo_pb.js";
+
+const requestId: Interceptor = (next) => async (req) => {
+  req.header.set("x-request-id", crypto.randomUUID());
+  return next(req);
+};
+const connection = await openBridgeConnection({
+  url: "ws://localhost:8080/tunnel",
+  target: "python-demo:50051",
+  interceptors: [requestId],
+});
+const clientFor = (name: string) => createClient(DemoService,
+  interceptTransport(connection.transport, {
+    baseUrl: "http://python-demo:50051",
+    interceptors: [(next) => async (req) => {
+      req.header.set("x-client-name", name);
+      return next(req);
+    }],
+  }),
+);
+try {
+  const worker = clientFor("background-worker");
+  const dashboard = clientFor("dashboard");
+  await Promise.all([
+    worker.echo({ text: "background work" }),
+    dashboard.echo({ text: "dashboard request" }),
+  ]);
+} finally {
+  await connection.close();
+}
+```
+
+The clients share one WebSocket and retain independent metadata. Client
+interceptors run before connection interceptors; both run once per logical RPC,
+outside retries, for all four RPC shapes. The bridge does not inspect application
+metadata. Wrapping a transport does not open another connection or own its lifetime.
+See [ordering, header precedence, and shared-lease examples](web/README.md#connect-interceptors)
+and the [runnable interceptor demo](web/examples/interceptors.ts).
 
 ## Development and verification
 
