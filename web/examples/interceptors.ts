@@ -13,10 +13,10 @@ export async function runInterceptorExample(
   log: (message: string) => void = console.log,
 ) {
   const defaults: Interceptor = (next) => async (req) => {
-    if (!req.header.has("x-client-name"))
-      req.header.set("x-client-name", "shared-default");
+    if (!req.header.has("x-request-source"))
+      req.header.set("x-request-source", "shared-default");
     log(
-      `${req.method.name}: ${req.header.get("x-proto-contract")} (${req.header.get("x-client-name")})`,
+      `${req.method.name}: ${req.header.get("x-client-name")} (${req.header.get("x-request-source")})`,
     );
     return next(req);
   };
@@ -27,48 +27,48 @@ export async function runInterceptorExample(
     interceptors: [defaults],
   });
   try {
-    const [legacyLease, currentLease] = await Promise.all([
+    const [workerLease, dashboardLease] = await Promise.all([
       shared.acquire(),
       shared.acquire(),
     ]);
     try {
-      const contract =
-        (version: string): Interceptor =>
+      const clientLabel =
+        (name: string): Interceptor =>
         (next) =>
         async (req) => {
-          req.header.set("x-proto-contract", `demo.echo@${version}`);
+          req.header.set("x-client-name", name);
           return next(req);
         };
-      const legacy = createClient(
+      const worker = createClient(
         DemoService,
-        interceptTransport(legacyLease.transport, {
+        interceptTransport(workerLease.transport, {
           baseUrl: `http://${target}`,
-          interceptors: [contract("1.0.0")],
+          interceptors: [clientLabel("background-worker")],
         }),
       );
-      const current = createClient(
+      const dashboard = createClient(
         DemoService,
-        interceptTransport(currentLease.transport, {
+        interceptTransport(dashboardLease.transport, {
           baseUrl: `http://${target}`,
           interceptors: [
-            contract("2.0.0"),
+            clientLabel("dashboard"),
             (next) => async (req) => {
-              req.header.set("x-client-name", "current-ui");
+              req.header.set("x-request-source", "interactive");
               return next(req);
             },
           ],
         }),
       );
-      // The demo accepts both metadata values; it does not enforce contracts.
+      // The clients attach independent labels while sharing one connection.
       const replies = await Promise.all([
-        legacy.echo({ text: "legacy client" }),
-        current.echo({ text: "current client" }),
+        worker.echo({ text: "background work" }),
+        dashboard.echo({ text: "dashboard request" }),
       ]);
       log(
         `Shared connection: ${replies.map((reply) => reply.text).join(", ")}`,
       );
     } finally {
-      await Promise.all([legacyLease.release(), currentLease.release()]);
+      await Promise.all([workerLease.release(), dashboardLease.release()]);
     }
   } finally {
     await shared.dispose();

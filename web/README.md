@@ -62,15 +62,15 @@ Use standard Connect interceptors for application metadata, tracing, or logging:
 import type { Interceptor } from "@connectrpc/connect";
 import { openBridgeConnection } from "@dunkymole/grpc-bridge";
 
-const contractVersion: Interceptor = (next) => async (request) => {
-  request.header.set("x-proto-contract", "demo.echo@1.0.0");
+const requestId: Interceptor = (next) => async (request) => {
+  request.header.set("x-request-id", crypto.randomUUID());
   return next(request);
 };
 
 const connection = await openBridgeConnection({
   url: "wss://bridge.example.com/tunnel",
   target: "echo-service:50051",
-  interceptors: [contractVersion],
+  interceptors: [requestId],
 });
 ```
 
@@ -90,14 +90,14 @@ The interceptor request URL identifies the logical backend using `scheme`,
 Changing interceptor metadata does not change destination selection or the outer
 WebSocket handshake. `backendBearerToken` remains an independent default;
 an `authorization` header supplied by a call or interceptor takes precedence.
-The bridge does not inspect application metadata or interpret contract versions.
+The bridge does not inspect or interpret application metadata.
 
 ### Per-client interceptors on a shared connection
 
 Use the public `interceptTransport(transport, options)` helper when metadata belongs
 to one generated client. Connection-level interceptors remain available for shared
 concerns such as authentication or tracing. For example, a backend serving both
-Echo and Orders can share one connection while each client sends its own contract.
+Echo and Orders can share one connection while each client sends its own label.
 This example assumes your generated services provide `echo({ text })` and
 `getOrder({ id })`; use the methods and messages from your own schemas:
 
@@ -110,8 +110,8 @@ import {
 import { EchoService } from "./gen/echo_pb.js";
 import { OrdersService } from "./gen/orders_pb.js";
 
-const contractVersion = (contract: string): Interceptor => (next) => async (req) => {
-  req.header.set("x-proto-contract", contract);
+const clientLabel = (name: string): Interceptor => (next) => async (req) => {
+  req.header.set("x-client-name", name);
   return next(req);
 };
 const tracing: Interceptor = (next) => async (req) => {
@@ -131,18 +131,18 @@ const [echoLease, ordersLease] = await Promise.all([
 try {
   const echo = createClient(EchoService, interceptTransport(echoLease.transport, {
     baseUrl: "http://services:50051",
-    interceptors: [contractVersion("demo.echo@1.0.0")],
+    interceptors: [clientLabel("echo-widget")],
   }));
   const orders = createClient(OrdersService, interceptTransport(ordersLease.transport, {
     baseUrl: "http://services:50051",
-    interceptors: [contractVersion("example.orders@2.3.0")],
+    interceptors: [clientLabel("orders-dashboard")],
   }));
   const [reply, order] = await Promise.all([
     echo.echo({ text: "hello" }),
     orders.getOrder({ id: "order-123" }),
   ]);
   console.log(reply, order);
-  // The calls share one connection and send different x-proto-contract values.
+  // The calls share one connection and send different x-client-name values.
 } finally {
   await Promise.all([echoLease.release(), ordersLease.release()]);
   await shared.dispose();
@@ -198,11 +198,12 @@ deadlines (including time in both chains), connection recovery, and the last-lea
 shutdown retain their existing behavior. Wrap the managed connection or lease’s
 transport to keep client interceptors outside its retry layer.
 
-For an executable version using the repository's generated `DemoService`, see
+For a runnable example using the repository's generated `DemoService`, see
 [`examples/interceptors.ts`](examples/interceptors.ts). With the Compose stack
 running, run `npm run example` from `web/`. It creates two clients with distinct
-contract metadata, runs concurrent calls over shared leases, and releases them.
-The Python demo echoes messages but does not validate contract versions.
+client labels, runs concurrent calls over shared leases, and releases them.
+It also shows a client overriding a shared metadata default. The Python demo
+echoes messages without interpreting these application headers.
 
 ## Explicit connection reuse
 
