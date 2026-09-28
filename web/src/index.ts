@@ -16,3 +16,4 @@ export {
 export { openChannel, PROFILE } from "./channel.js";
 export { createTunnelTransport } from "./transport.js";
 export { inputQueue } from "./queue.js";
+export type { RetryOptions, RetryPolicy } from "./retry.js";

@@ -2,6 +2,7 @@ import { createContextKey, type Transport } from "@connectrpc/connect";
 import { RecoveringConnection } from "./recovery.js";
 import { openChannel } from "./channel.js";
 import { createTunnelTransport } from "./transport.js";
+import type { RetryOptions } from "./retry.js";
 
 export type TokenProvider = () =>
   | string
@@ -26,6 +27,8 @@ export interface BridgeConnectionEvent {
 export type BridgeConnectionListener = (event: BridgeConnectionEvent) => void;
 
 export interface BridgeConnectionOptions {
+  /** Transparent retries are automatic; configured RPC retries are opt-in. */
+  retry?: RetryOptions;
   /** Public ws:// or wss:// bridge endpoint. */
   url: string;
   /** Exact backend host:port selected during the WebSocket handshake. */
@@ -58,30 +61,34 @@ async function resolveToken(source?: TokenSource): Promise<string | undefined> {
 export function createBridgeConnection(
   options: BridgeConnectionOptions,
 ): BridgeConnection {
-  return new RecoveringConnection(async (signal) => {
-    const [tunnelToken, backendBearerToken] = await Promise.all([
-      resolveToken(options.tunnelToken),
-      resolveToken(options.backendBearerToken),
-    ]);
-    signal.throwIfAborted();
-    const channel = await openChannel(options.url, tunnelToken ?? "", {
-      target: options.target,
-      signal,
-    });
-    try {
-      return {
-        channel,
-        transport: createTunnelTransport(channel, {
-          bearerToken: backendBearerToken,
-          authority: options.authority ?? options.target ?? "backend",
-          scheme: options.scheme,
-        }),
-      };
-    } catch (error) {
-      await channel.close();
-      throw error;
-    }
-  }, options.onStateChange);
+  return new RecoveringConnection(
+    async (signal) => {
+      const [tunnelToken, backendBearerToken] = await Promise.all([
+        resolveToken(options.tunnelToken),
+        resolveToken(options.backendBearerToken),
+      ]);
+      signal.throwIfAborted();
+      const channel = await openChannel(options.url, tunnelToken ?? "", {
+        target: options.target,
+        signal,
+      });
+      try {
+        return {
+          channel,
+          transport: createTunnelTransport(channel, {
+            bearerToken: backendBearerToken,
+            authority: options.authority ?? options.target ?? "backend",
+            scheme: options.scheme,
+          }),
+        };
+      } catch (error) {
+        await channel.close();
+        throw error;
+      }
+    },
+    options.onStateChange,
+    options.retry,
+  );
 }
 
 /** Await the initial connection attempt; subsequent transport loss heals automatically. */
@@ -124,7 +131,10 @@ export class SharedBridgeConnection {
 
   constructor(options: BridgeConnectionOptions) {
     // Snapshot configuration; token providers can still refresh credentials.
-    this.options = { ...options };
+    this.options = {
+      ...options,
+      retry: options.retry && structuredClone(options.retry),
+    };
   }
 
   async acquire(): Promise<BridgeConnectionLease> {

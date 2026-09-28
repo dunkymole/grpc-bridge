@@ -1,4 +1,5 @@
 import { Code, ConnectError, type Transport } from "@connectrpc/connect";
+import { RetryingTransport, type RetryOptions } from "./retry.js";
 import {
   waitForReady,
   type BridgeConnection,
@@ -8,11 +9,15 @@ import {
 } from "./client.js";
 
 export interface Session {
-  channel: { closed: Promise<void>; close(): void | Promise<void> };
+  channel: {
+    closed: Promise<void>;
+    draining?: Promise<void>;
+    close(): void | Promise<void>;
+  };
   transport: Transport;
 }
 
-/** Internal channel state machine. A dispatched RPC always stays on its original session. */
+/** Durable channel: reconnect transports and drain GOAWAY sessions independently. */
 export class RecoveringConnection implements BridgeConnection {
   readonly transport: Transport;
   readonly closed: Promise<void>;
@@ -21,6 +26,7 @@ export class RecoveringConnection implements BridgeConnection {
   private firstReady!: () => void;
   private firstFailure!: (error: unknown) => void;
   private session?: Session;
+  private draining = new Set<Session>();
   private stateValue: BridgeConnectionState = "connecting";
   private listeners = new Set<BridgeConnectionListener>();
   private changes = new Set<() => void>();
@@ -31,6 +37,7 @@ export class RecoveringConnection implements BridgeConnection {
   constructor(
     private readonly dial: (signal: AbortSignal) => Promise<Session>,
     listener?: BridgeConnectionListener,
+    retry?: RetryOptions,
   ) {
     this.closed = new Promise((resolve) => {
       this.finish = resolve;
@@ -41,7 +48,7 @@ export class RecoveringConnection implements BridgeConnection {
     });
     void this.initial.catch(() => {});
     if (listener) this.listeners.add(listener);
-    this.transport = {
+    const direct: Transport = {
       unary: async (method, signal, timeoutMs, headers, input, context) => {
         const ready = await this.select(
           signal,
@@ -73,6 +80,15 @@ export class RecoveringConnection implements BridgeConnection {
         );
       },
     };
+    this.transport = new RetryingTransport(
+      async (signal, timeout, retrying) => {
+        // Preserve each call's waitForReady setting on its first selection.
+        if (!retrying) return { transport: direct, timeoutMs: timeout };
+        return this.select(signal, timeout, true);
+      },
+      this.stopped.signal,
+      retry,
+    ).transport;
     // Allow callers to receive the object before lifecycle callbacks run.
     queueMicrotask(() => {
       if (!this.stopped.signal.aborted) void this.connect();
@@ -125,6 +141,15 @@ export class RecoveringConnection implements BridgeConnection {
         () => this.lost(session, "remote"),
         (error) => this.lost(session, "error", error),
       );
+      void session.channel.draining?.then(() => {
+        if (this.stopped.signal.aborted || this.session !== session) return;
+        this.draining.add(session);
+        void session.channel.closed
+          .finally(() => this.draining.delete(session))
+          .catch(() => {});
+        this.session = undefined;
+        void this.connect();
+      });
       this.emit("open");
       this.firstReady();
     } catch (error) {
@@ -205,7 +230,10 @@ export class RecoveringConnection implements BridgeConnection {
     this.firstFailure(new ConnectError("Channel closed", Code.Unavailable));
     this.emit("closed", "local");
     try {
-      await session?.channel.close();
+      await Promise.all(
+        [session, ...this.draining].map((s) => s?.channel.close()),
+      );
+      this.draining.clear();
     } finally {
       this.finish();
     }

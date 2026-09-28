@@ -33,6 +33,10 @@ for (const name of [
 }
 
 const declaration = await readFile("package-dist/index.d.ts", "utf8");
-if (!declaration.includes("BridgeConnectionOptions")) {
+if (
+  !["BridgeConnectionOptions", "RetryOptions", "RetryPolicy"].every((name) =>
+    declaration.includes(name),
+  )
+) {
   throw new Error("Public declarations were not emitted");
 }

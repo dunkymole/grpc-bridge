@@ -13,7 +13,7 @@ service descriptors, decodes protobufs, parses HTTP/2, or remaps stream IDs.
    server stubs and Protobuf-ES TypeScript service/message descriptors.
 2. Connect's typed client calls our transport adapter. The adapter owns gRPC
    records, deadlines, cancellation, metadata, and status validation.
-3. `@debdattabasu/h2ts` implements browser HTTP/2 and HPACK. It provides stream IDs,
+3. The vendored h2ts engine implements browser HTTP/2 and HPACK. It provides stream IDs,
    DATA/HEADERS/trailers, flow-control windows, RST_STREAM, PING, and GOAWAY.
 4. Our bounded WebSocket adapter carries that byte stream over one channel.
 5. The Go bridge removes/adds WebSocket framing and relays opaque bytes over one
@@ -105,8 +105,12 @@ services; the bridge has no replay log or shared session database.
 The HTTP/2 dependency is pinned and exercised against Python gRPC; this is not a
 complete independent HTTP/2/security audit. Compression, binary metadata
 ergonomics, rich status details, interception support, nuanced HTTP→gRPC error
-mapping, comprehensive GOAWAY behavior, and high-concurrency browser memory
+mapping, exhaustive HTTP/2 conformance, and high-concurrency browser memory
 testing remain hardening work. Consume or cancel all returned streams.
+
+Managed client channels handle GOAWAY draining, transparent retries, and optional
+configured retries. [The retry contract](../web/RETRIES.md) documents commitment,
+replay budgets, configuration, and fault-injection/native-client comparisons.
 
 The relay has explicit limits and tests, but a handwritten RFC 6455 parser needs
 an external conformance suite and sustained fuzzing before internet deployment.

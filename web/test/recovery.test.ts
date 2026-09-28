@@ -186,9 +186,14 @@ test("close during dial disposes late sessions and never reopens", async () => {
 
 test("an in-flight RPC is not retried after transport loss", async () => {
   const first = session();
+  let dispatched!: () => void;
+  const started = new Promise<void>((resolve) => {
+    dispatched = resolve;
+  });
   let calls = 0;
   first.transport.unary = async () => {
     calls++;
+    dispatched();
     await first.channel.closed;
     throw new ConnectError("lost", Code.Unavailable);
   };
@@ -196,8 +201,7 @@ test("an in-flight RPC is not retried after transport loss", async () => {
   await connection.initial;
   const client = createClient(DemoService, connection.transport);
   const pending = assert.rejects(client.echo({}), code(Code.Unavailable));
-  await Promise.resolve();
-  await Promise.resolve();
+  await started;
   first.stop();
   await pending;
   assert.equal(calls, 1);

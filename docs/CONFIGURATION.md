@@ -117,6 +117,12 @@ backoff values are fixed. `waitForReady` is a per-RPC Connect context option, of
 by default; RPC `timeoutMs` and `signal` cover both waiting and execution.
 See the [client recovery guide](../web/README.md#lifecycle-and-cleanup).
 
+RPC retry settings are separate from connection backoff. `BridgeConnectionOptions.retry`
+accepts `policy`, `methods`, `perRpcBufferBytes`, `bufferBytes`, and `throttling`.
+The [complete retry settings table and example](../web/RETRIES.md#configure-retries)
+document their defaults and constraints. These are client options, not bridge
+environment variables; the Go relay does not decode RPCs or implement retries.
+
 | Variable               | Default                      | Meaning                                                          |
 | ---------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `TUNNEL_URL`           | `ws://localhost:8080/tunnel` | Public bridge endpoint.                                          |

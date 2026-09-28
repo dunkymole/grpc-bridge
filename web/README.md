@@ -10,6 +10,10 @@ breaking API changes; patch releases remain backward-compatible within that mino
 
 ## Install
 
+The package is not yet published to npm. Build a local tarball with `npm pack`
+from this directory and install that `.tgz` in a consuming project. The command
+below is the registry installation form for a future published release.
+
 ```sh
 npm install @dunkymole/grpc-bridge \
   @connectrpc/connect @bufbuild/protobuf
@@ -42,7 +46,8 @@ await connection.close();
 The connection is a long-lived channel: existing typed clients keep working after
 its underlying WebSocket/HTTP/2 session is replaced. Token providers are awaited
 before every connection attempt, including automatic reconnection. Use providers
-when credentials can change. In-flight RPCs are never retried or replayed.
+when credentials can change. Transparent retries use positive evidence that the
+backend did not process the RPC; additional retries require an explicit policy.
 
 The outer tunnel token authenticates the WebSocket. `backendBearerToken` becomes
 `authorization: Bearer <token>` inside each gRPC request. The bridge does not
@@ -157,15 +162,23 @@ to both waiting and execution. Streaming inputs are not consumed while waiting.
 Set a deadline to bound the wait. Closing the channel rejects waiting calls,
 aborts connection establishment, and stops future reconnect attempts.
 
-Always call `connection.close()`, release every shared lease, or dispose the shared handle. A
-dropped transport fails active RPCs with a transport error; established streams
-cannot resume. The application decides whether an operation is safe to retry.
-Reconnection and wait-for-ready follow native gRPC channel behavior, but this
-client does not implement gRPC transparent retries, retry policies, load balancing,
-or stream resumption. Graceful HTTP/2 GOAWAY migration is also not implemented:
-recovery currently starts when the underlying session closes, not when a peer
-announces that it will stop accepting new streams. The low-level `openChannel()`
-remains a single session.
+Always call `connection.close()`, release every shared lease, or dispose the shared
+handle. On GOAWAY, new calls move to a replacement connection while accepted RPCs
+drain on the old session. Established streams cannot resume after failure.
+
+## RPC retries
+
+Managed connections automatically retry requests proven unsent and allow one
+transparent retry for a refused stream. An uncertain socket failure alone is not
+enough to replay an RPC. Optional `retry.methods` or `retry.policy` settings enable
+configured retries with bounded buffers, backoff, server pushback, and throttling.
+Normal response headers or exceeding a replay budget commits the RPC and stops
+retries. Cancellation and the original deadline cover every attempt.
+
+See [retry configuration, TypeScript example, and validation](RETRIES.md) for all
+settings and exact supported semantics. The low-level `openChannel()` remains a
+single session. Hedging, load balancing, and established stream resumption are
+not implemented.
 
 ## Low-level API
 
@@ -187,7 +200,7 @@ a 1 MiB receive queue and sends in 16 KiB chunks.
 The package is ESM-only and side-effect free. It ships JavaScript, TypeScript
 declarations, declaration maps, source maps with embedded sources, the MIT license,
 and third-party notices. A production browser bundle including runtime dependencies
-is 66.5 kB minified and 20.8 kB gzip. Run `npm run size` to reproduce the bundle
+is approximately 73.4 kB minified and 23.1 kB gzip. Run `npm run size` to reproduce the bundle
 measurement. Demo UI and generated demo protobuf code are excluded.
 
 ## Examples

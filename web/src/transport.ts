@@ -7,8 +7,14 @@ import {
   type MessageInitShape,
   type MessageShape,
 } from "@bufbuild/protobuf";
-import { Code, ConnectError, type Transport } from "@connectrpc/connect";
-import type { H2Connection } from "@debdattabasu/h2ts";
+import {
+  Code,
+  ConnectError,
+  type Transport,
+  type ContextValues,
+} from "@connectrpc/connect";
+import { attemptContext, attemptError } from "./retry.js";
+import type { H2Connection } from "./h2/connection.js";
 import { frame, unframe, validateStatus } from "./framing.js";
 
 /** Standard Connect typed clients, with native gRPC bytes inside HTTP/2. */
@@ -32,10 +38,16 @@ export function createTunnelTransport(
     timeoutMs: number | undefined,
     header: HeadersInit | undefined,
     input: AsyncIterable<MessageInitShape<I>>,
+    context?: ContextValues,
   ) {
+    let committed = false;
     const abort = new AbortController();
     const onAbort = () =>
-      abort.abort(new ConnectError("Call canceled", Code.Canceled));
+      abort.abort(
+        signal?.reason instanceof ConnectError
+          ? signal.reason
+          : new ConnectError("Call canceled", Code.Canceled),
+      );
     if (signal?.aborted) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });
     const timer =
@@ -92,9 +104,7 @@ export function createTunnelTransport(
         return abort.signal.reason instanceof ConnectError
           ? abort.signal.reason
           : ConnectError.from(abort.signal.reason);
-      return error instanceof ConnectError
-        ? error
-        : new ConnectError(String(error), Code.Unavailable);
+      return attemptError(error, committed);
     };
     try {
       const response = await connection.request({
@@ -106,6 +116,12 @@ export function createTunnelTransport(
         body,
         signal: abort.signal,
       });
+      const trailersOnly =
+        response.endStream && response.headers["grpc-status"] !== undefined;
+      if (!trailersOnly) {
+        committed = true;
+        context?.get(attemptContext)?.commit();
+      }
       if (response.status !== 200)
         throw new ConnectError(`HTTP ${response.status}`, Code.Unavailable);
       if (
@@ -114,6 +130,11 @@ export function createTunnelTransport(
         )
       )
         throw new ConnectError("Invalid gRPC content type", Code.Unknown);
+      if (trailersOnly) {
+        validateStatus(response.headers, undefined);
+        committed = true;
+        context?.get(attemptContext)?.commit();
+      }
       const trailers = new Headers();
       async function* messages(): AsyncGenerator<MessageShape<O>> {
         try {
@@ -143,7 +164,7 @@ export function createTunnelTransport(
     }
   }
   return {
-    async unary(method, signal, timeoutMs, header, input) {
+    async unary(method, signal, timeoutMs, header, input, context) {
       const result = await start(
         method,
         signal,
@@ -152,6 +173,7 @@ export function createTunnelTransport(
         (async function* () {
           yield input;
         })(),
+        context,
       );
       let message: MessageShape<typeof method.output> | undefined;
       let count = 0;
@@ -173,9 +195,9 @@ export function createTunnelTransport(
         service: method.parent,
       };
     },
-    async stream(method, signal, timeoutMs, header, input) {
+    async stream(method, signal, timeoutMs, header, input, context) {
       return {
-        ...(await start(method, signal, timeoutMs, header, input)),
+        ...(await start(method, signal, timeoutMs, header, input, context)),
         stream: true,
         method,
         service: method.parent,

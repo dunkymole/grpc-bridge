@@ -108,8 +108,10 @@ await connection.close();
 
 Await each `send()`; do not build an unbounded array of pending sends. Application
 code should consume or cancel every response stream. Managed channels reconnect
-automatically for future calls. They never retry or replay dispatched RPCs.
-See the [recovery and wait-for-ready guide](web/README.md#lifecycle-and-cleanup).
+automatically for future calls. They support transparent retries, GOAWAY draining,
+and opt-in configured retries with bounded request buffering.
+See the [retry contract and TypeScript example](web/RETRIES.md) and
+[recovery and wait-for-ready guide](web/README.md#lifecycle-and-cleanup).
 
 ## Development and verification
 

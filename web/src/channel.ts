@@ -1,4 +1,4 @@
-import { connect, type H2Connection } from "@debdattabasu/h2ts";
+import { H2Connection } from "./h2/connection.js";
 import { Code, ConnectError } from "@connectrpc/connect";
 
 export const PROFILE = "grpc-tunnel.v1";
@@ -106,7 +106,7 @@ export async function openChannel(
       ws.close();
     },
   });
-  return connect(
+  return new H2Connection(
     { readable, writable },
     {
       settings: { enablePush: false, initialWindowSize: 65535 },

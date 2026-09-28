@@ -75,6 +75,6 @@ export function validateStatus(
     try {
       message = decodeURIComponent(encoded);
     } catch {}
-    throw new ConnectError(message, Number(raw));
+    throw new ConnectError(message, Number(raw), { ...headers, ...trailers });
   }
 }
