@@ -22,8 +22,25 @@ lock against that exact input, then emits the runtime graph described in
 [`contracts/runtime-graph-v1.md`](contracts/runtime-graph-v1.md). A standalone
 generation command must receive validated descriptor input to produce a strict
 artifact; a lock file alone is not treated as schema validation. The checked-in
-`src/gen/demo_contract.ts` demonstrates the artifact shape for the repository
-demo; application code should use the coordinated generator.
+`src/gen/demo_contract.ts` is generated from `proto/demo.proto` and
+`contracts/demo.contract.json` by the same protoc plugin used by applications.
+
+The first lock can be created from the demo proto, then regenerated together
+with the service descriptor:
+
+```sh
+proto-contract snapshot --proto ../proto/demo.proto --proto-path ../proto \
+  --service bridge.demo.v1.DemoService --api bridge.demo --version 1.0.0 \
+  --out contracts/demo.contract.json
+
+protoc -I ../proto \
+  --plugin=protoc-gen-es=node_modules/.bin/protoc-gen-es \
+  --es_out=src/gen --es_opt=target=ts,import_extension=js \
+  --plugin=protoc-gen-proto-contract=/path/to/protoc-gen-proto-contract \
+  --proto-contract_out=. \
+  --proto-contract_opt=lang=typescript,bindings=contracts/demo.bindings.json \
+  demo.proto
+```
 
 ## Create a client
 
