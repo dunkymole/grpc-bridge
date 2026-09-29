@@ -23,9 +23,11 @@ try {
 }
 ```
 
-The managed package API is `openBridgeConnection({ url, target, tunnelToken })`.
-It exposes a standard Connect transport and explicit lifecycle/cleanup. The
-lower-level API remains `openChannel(url, token, { target: "host:port" })`.
+`openBridgeConnection({ url, target, tunnelToken })` awaits initial establishment;
+`createBridgeConnection(options)` returns immediately and can recover from an
+initial outage. Both expose a stable Connect transport with automatic session
+recovery and explicit cleanup. RPC replay follows the [retry contract](../web/RETRIES.md).
+The lower-level API remains `openChannel(url, token, { target: "host:port" })`.
 For deployment use `wss://` with TLS and the configured browser Origin.
 
 ## Run the examples
@@ -40,9 +42,13 @@ npm run example
 
 [client.ts](../web/examples/client.ts) demonstrates all four RPC shapes,
 concurrent calls, metadata/trailers, and cancellation with connection reuse.
+[interceptors.ts](../web/examples/interceptors.ts) demonstrates independent client
+labels and shared metadata defaults on one connection.
 [run.ts](../web/examples/run.ts) accepts `TUNNEL_URL`, `TUNNEL_TOKEN`, and
-`BACKEND_TARGET` environment variables. Node 24+ supplies WebSocket and Web Streams;
-the shared client module also works in a browser build.
+`BACKEND_TARGET` environment variables, plus optional `FORWARD_TUNNEL_TOKEN` for
+the RPC examples. See [runner settings](CONFIGURATION.md#example-runner-environment).
+Node 24+ supplies WebSocket and Web Streams; the shared client module also works
+in a browser build.
 
 ## Add a backend without restarting the bridge
 
@@ -105,6 +111,12 @@ Likewise HTTP/2 `:authority` is separate from the TCP destination. The managed A
 defaults it to the selected target and accepts an explicit `authority` for upstream
 virtual hosting. To reach another backend, open another connection. Each connection
 can still multiplex many RPCs.
+
+Standard Connect interceptors can attach this metadata at either connection or
+per-client scope. `interceptTransport(lease.transport, { baseUrl, interceptors })`
+creates an independent client chain while retaining the same connection and lease
+lifetime. Interceptor `baseUrl` is descriptive; it cannot change the selected
+destination. See [client examples and header precedence](../web/README.md#connect-interceptors).
 
 ## Forwarding authentication to the backend
 

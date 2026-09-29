@@ -6,7 +6,7 @@ when the bridge restarts. All series, including zero-valued failures, are emitte
 
 | Metric | Type | Meaning |
 | --- | --- | --- |
-| `bridge_active_tunnels` | Gauge | Admission slots occupied, including backend setup. Preserves the original metric semantics. |
+| `bridge_active_tunnels` | Gauge | Admission slots occupied, including backend setup. |
 | `bridge_established_tunnels` | Gauge | Open tunnels whose WebSocket upgrade response has been flushed. |
 | `bridge_tunnel_capacity` | Gauge | Configured maximum admission slots (`-max-connections`). |
 | `bridge_connection_attempts_total` | Counter | Requests reaching `/tunnel`, including rejected handshakes. |

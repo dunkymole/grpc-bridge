@@ -54,6 +54,8 @@ Compose network; it exposes no host port. No API keys or cloud services required
   metadata for clients sharing one connection.
 - One shared HTTP/2 connection, with concurrent streams and native trailers.
 - Cancellation, deadlines, request half-close, explicit connection failure.
+- Managed connection recovery, GOAWAY draining, transparent retries, and opt-in
+  configured RPC retries with bounded replay buffers.
 - Incremental gRPC parsing; 1 MiB message limit; awaitable input producers.
 - A versioned tunnel profile, exact browser-origin checking, optional token auth.
 - Fixed-size relay buffers, connection admission limits, ping/pong, write deadlines.
@@ -75,7 +77,11 @@ For independent consumers, create one `SharedBridgeConnection` with
 `acquire()` and `release()`; the first acquisition opens the connection and
 the last release closes it. The owner calls `dispose()` at shutdown or logout.
 
-The reusable package is prepared as `@dunkymole/grpc-bridge`. See its
+The reusable package is prepared as `@dunkymole/grpc-bridge` but is not yet
+published to npm. Follow the [local installation steps](web/README.md#install)
+to use the package imports below in your own project. Generate your service
+descriptors with Protobuf-ES; demo descriptors are not included in the package.
+See its
 [API and compatibility guide](web/README.md), the
 [runnable TypeScript examples](web/examples/client.ts), and the
 [client addressing and routing guide](docs/CLIENT-AND-ROUTING.md). Run them with
@@ -181,9 +187,12 @@ npm run test:e2e    # running Compose stack required
 The end-to-end suite exercises Python through the actual bridge: all four RPC
 shapes, bidi responses before request half-close, 16 concurrent calls, a 180 KB
 message crossing flow-control windows, trailers, native errors, deadlines,
-cancellation, connection loss, and explicit reconnect. It also adds a new backend and revokes its allowlist entry without restarting
-the bridge, while existing channels keep working. The page runs the same
-interoperability checks in a real browser.
+cancellation, connection loss, and managed recovery. It also checks interceptor
+isolation on shared connections, adds a new backend, and revokes its allowlist
+entry without restarting the bridge while existing tunnels keep working.
+`npm test` separately exercises retry faults against a real HTTP/2 server.
+The page runs the core interoperability checks in a real browser; see the
+[validation guide](docs/VALIDATION.md) for automated and manual coverage.
 
 For code generation, after installing the backend requirements and web packages:
 
@@ -226,8 +235,9 @@ containing the token. There is no arbitrary upstream URL routing.
 
 `/healthz` probes backend TCP availability; `/metrics` exposes connection counts,
 establishment failures, forwarded bytes, and backend dial duration. See the
-[metrics reference](docs/METRICS.md) for definitions and Prometheus queries. Health checks cover the default upstream only. The built-in Docker healthcheck uses local HTTP; override it if enabling
-direct HTTPS inside the container.
+[metrics reference](docs/METRICS.md) for definitions and Prometheus queries.
+Health checks cover the default upstream only. The built-in Docker healthcheck
+uses local HTTP; override it if enabling direct HTTPS inside the container.
 
 ## Memory
 
@@ -245,8 +255,11 @@ See [validation notes](docs/VALIDATION.md) for measured prototype results.
 - [Security scope](SECURITY.md)
 - [Third-party acknowledgements](NOTICE.md)
 
-No automatic retry, resumption, compression, or per-RPC bridge routing is
-implemented. A dropped tunnel fails its active calls. Reconnecting starts a new
-HTTP/2 connection; applications decide whether an operation is safe to retry.
+Managed clients reconnect and support the documented transparent and opt-in
+configured retries. Reconnection does not resume established streams; an
+uncertain failure is replayed only if the configured policy permits it before
+commitment. Compression, hedging, load balancing, and per-RPC routing in the
+bridge are not implemented. See the [retry contract](web/RETRIES.md) and
+[design limits](docs/DESIGN.md#deliberate-prototype-limits).
 
 Licensed under [MIT](LICENSE).

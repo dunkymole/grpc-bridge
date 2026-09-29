@@ -6,12 +6,14 @@
 - [x] Separate Python gRPC service container.
 - [x] Standard generated Protobuf types and Connect typed facade.
 - [x] All four RPC shapes, real duplex, multiplexing, trailers, half-close.
-- [x] Cancellation, deadlines, connection loss, explicit reconnect.
+- [x] Cancellation, deadlines, durable managed channels, and shared leases.
+- [x] GOAWAY draining, transparent retries, and opt-in configured RPC retries.
+- [x] Connection-level and per-client Connect interceptors with metadata isolation.
 - [x] Versioned channel profile, optional auth, origin checks, fixed memory buffers.
 - [x] Repeatable unit, fuzz, and Python interoperability tests.
 
 - [x] Runnable TypeScript examples and client-selected, live-allowlisted destinations.
-- [x] Versioned TypeScript package with lifecycle events, token providers, and explicit connection reuse.
+- [x] Packable TypeScript library with declarations, lifecycle events, token providers, and explicit connection reuse.
 
 ## v0.2 — protocol hardening
 
@@ -26,6 +28,7 @@
 
 ## v0.3 — reusable library and community release
 
+- Publish the prepared TypeScript package to npm; local tarball installation is available now.
 - Establish browser support matrix and headless browser CI.
 - Add a .NET backend interoperability fixture.
 - Add scoped identity integration and deployment examples.
