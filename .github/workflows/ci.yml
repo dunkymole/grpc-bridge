@@ -69,3 +69,38 @@ jobs:
             web/test-results/**
             test-results/autobahn/**
           if-no-files-found: ignore
+
+  proposed-contract-pair:
+    name: Test this bridge revision with reviewed Proto Contract
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMPOSE_PROJECT_NAME: proto-contract-pair-${{ github.run_id }}-${{ github.run_attempt }}
+      GRPC_BRIDGE_REPOSITORY: ${{ github.event.pull_request.head.repo.clone_url || 'https://github.com/dunkymole/grpc-bridge.git' }}
+      GRPC_BRIDGE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+      PROTO_CONTRACT_REVIEWED_REF: 6d028e3632e7b027f380cbc6b0449dfe4ca4b6c1
+    steps:
+      - name: Fetch reviewed Proto Contract revision
+        run: |
+          set -euo pipefail
+          mkdir proto-contract
+          git -C proto-contract init
+          git -C proto-contract remote add origin https://github.com/dunkymole/proto-contract.git
+          git -C proto-contract fetch --depth=1 origin "$PROTO_CONTRACT_REVIEWED_REF"
+          git -C proto-contract checkout --detach FETCH_HEAD
+
+      - name: Run native and actual-package matrix against this bridge revision
+        run: pwsh ./scripts/test-all.ps1
+        working-directory: proto-contract
+
+      - name: Run versioned rollout against this bridge revision
+        run: pwsh ./scripts/test-rollout.ps1
+        working-directory: proto-contract
+
+      - name: Record pair diagnostics and clean the matrix project
+        if: always()
+        working-directory: proto-contract
+        run: |
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color || true
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" down --remove-orphans || true

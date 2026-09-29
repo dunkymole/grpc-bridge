@@ -15,7 +15,8 @@ The [CI workflow](../.github/workflows/ci.yml) runs on pushes and pull requests:
 | `npm run test:e2e && npm run example` in `web/` | All RPC shapes through the actual WebSocket relay, live routing changes, metadata, shared leases, recovery, and runnable examples. |
 | Pinned Playwright Compose project | Strict-contract browser clients in Chromium, Firefox, and WebKit. |
 | `scripts/run-autobahn.sh` | Pinned Autobahn subset with exact case-policy and report validation. |
-| Focused bridge TLS/drain Go tests | Local-CA WSS/upstream ALPN and process trust checks, plus health/shutdown cases. |
+| `go test -race ./...` | Includes local-CA WSS/upstream ALPN and process trust checks, plus health/shutdown cases. |
+| `proposed-contract-pair` workflow job | Full Proto Contract matrix and rollout against the event's proposed bridge revision. |
 
 CI repeats the integration suite and examples after enabling tunnel-token
 authentication. Locally, two rejection tests skip when `TUNNEL_TOKEN` is empty.
@@ -71,6 +72,16 @@ uses the pinned Playwright image. The descriptor fixture check uses a digest-pin
 Node/Alpine image and protobuf 31.1-r1. Autobahn is limited to the checked-in
 57-case selection and may report the explicit diagnostic outcomes documented
 below.
+
+The `proposed-contract-pair` job checks bridge pull requests and pushes against a
+fixed reviewed Proto Contract commit. It fetches that public commit without
+credentials, then passes the event's bridge repository URL and immutable commit
+SHA into the Proto Contract Compose build. This exercises the generated package
+fixture, the full native/TypeScript matrix, and the rollout test with the bridge
+revision being reviewed. The workflow has read-only repository permissions and
+does not expose repository secrets to these builds. Proto Contract's own release
+workflow performs the reciprocal check: proposed proto/lock changes against a
+fixed reviewed bridge commit.
 
 ## WebSocket conformance checks
 
