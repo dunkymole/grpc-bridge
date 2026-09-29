@@ -1,12 +1,19 @@
 name: CI
-on: [push, pull_request]
+on: [push, pull_request, merge_group]
+concurrency:
+  group: grpc-bridge-ci-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: grpc-bridge-ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
@@ -16,11 +23,20 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - run: go test -race ./...
       - run: go vet ./...
       - run: go test ./cmd/bridge -fuzz=FuzzRelay -fuzztime=10s
       - run: npm ci && npm run build && npm test
         working-directory: web
+      - run: docker run --rm -v "${PWD}:/src" -w /src node:24-alpine sh -lc 'apk add --no-cache protobuf >/dev/null && npm run contracts:verify'
+        working-directory: web
+      - run: go test -race ./...
+        working-directory: examples/admission
+      - run: go vet ./...
+        working-directory: examples/admission
       - run: docker compose up --build -d --wait
       - run: npm run test:e2e && npm run example
         working-directory: web
@@ -31,5 +47,25 @@ jobs:
         working-directory: web
         env:
           TUNNEL_TOKEN: local-ci-test-token
+      - run: docker compose --project-name grpc-bridge-browser-ci -f compose.yaml -f compose.browser.yaml up --build --abort-on-container-exit --exit-code-from browser-test
+        env:
+          BRIDGE_PORT: 18081
       - if: always()
-        run: docker compose logs && docker compose down
+        run: |
+          docker compose --project-name grpc-bridge-browser-ci -f compose.yaml -f compose.browser.yaml logs --no-color || true
+          docker compose --project-name grpc-bridge-browser-ci -f compose.yaml -f compose.browser.yaml down --remove-orphans || true
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: bash scripts/run-autobahn.sh
+      - run: go test -race ./cmd/bridge -run 'Test(.*TLS.*|.*Drain.*|.*Health.*|.*Ready.*)' -count=1
+      - if: always()
+        run: |
+          docker compose logs --no-color || true
+          docker compose down --remove-orphans || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bridge-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web/test-results/**
+            test-results/autobahn/**
+          if-no-files-found: ignore

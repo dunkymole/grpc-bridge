@@ -6,11 +6,16 @@ The [CI workflow](../.github/workflows/ci.yml) runs on pushes and pull requests:
 
 | Check | Coverage |
 | --- | --- |
-| `go test -race ./...` and `go vet ./...` | Relay, handshake, routing, metrics, shutdown, and concurrency checks. |
+| `go test -race ./...` and `go vet ./...` | Relay, handshake, routing, metrics, shutdown, TLS trust, close-frame, and concurrency checks. |
 | `go test ./cmd/bridge -fuzz=FuzzRelay -fuzztime=10s` | Short WebSocket parser fuzz run. |
 | `npm ci && npm run build && npm test` in `web/` | Strict TypeScript compilation, package exports, framing, shared ownership, recovery, retries, and interceptors. |
+| `npm run contracts:verify` in a pinned Node container with `protobuf` | Regenerates and verifies the strict contract descriptor fixture. |
+| `go test -race ./...` and `go vet ./...` in `examples/admission/` | Nested admission verifier module, which root module tests do not include. |
 | `docker compose up --build -d --wait` | Build the bridge and Python backend and wait for health checks. |
 | `npm run test:e2e && npm run example` in `web/` | All RPC shapes through the actual WebSocket relay, live routing changes, metadata, shared leases, recovery, and runnable examples. |
+| Pinned Playwright Compose project | Strict-contract browser clients in Chromium, Firefox, and WebKit. |
+| `scripts/run-autobahn.sh` | Pinned Autobahn subset with exact case-policy and report validation. |
+| Focused bridge TLS/drain Go tests | Local-CA WSS/upstream ALPN and process trust checks, plus health/shutdown cases. |
 
 CI repeats the integration suite and examples after enabling tunnel-token
 authentication. Locally, two rejection tests skip when `TUNNEL_TOKEN` is empty.
@@ -55,6 +60,14 @@ and large messages.
 
 The strict-contract client path passed all six checks in the pinned Chromium,
 Firefox, and WebKit images on 29 September 2026.
+
+CI runs the browser and Autobahn projects separately from the ordinary bridge
+Compose project. It always removes each named test project and uploads
+`web/test-results/` and `test-results/autobahn/` as the
+`bridge-validation-<run>-<attempt>` artifact, including reports and failure
+traces when present. The browser job has a 1 GiB shared-memory allocation and
+uses the pinned Playwright image; Autobahn is limited to the checked-in 57-case
+selection and may report the explicit diagnostic outcomes documented below.
 
 ## WebSocket conformance checks
 
