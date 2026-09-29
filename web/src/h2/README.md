@@ -13,6 +13,16 @@ stream failure. Request admission checks connection state again after async wait
 These hooks let the gRPC layer make retry decisions without parsing error strings
 or reaching into private HTTP/2 state.
 
+The receive path enforces each advertised stream window and the connection window
+on the full DATA payload, including a Pad Length byte and padding. Padding and
+discarded DATA return connection credit promptly; application bytes return credit
+as the body is read. Defaults bound unread response data to 1 MiB per stream and
+64 MiB across the connection. Decoded response header lists are limited to 64 KiB
+and 256 fields while HPACK continues through the complete block to preserve the
+connection compression table. A rejected field list resets its stream; malformed
+HPACK remains a connection error. The compressed header block remains capped at
+1 MiB.
+
 Keep upstream attribution and this change list when updating the engine. The wire
 fault tests in `web/test/retry.test.ts` and Python interoperability tests cover its
 integration. This is maintained source, not a patch applied to `node_modules`.

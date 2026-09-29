@@ -24,6 +24,8 @@ const EMPTY = new Uint8Array(0);
 // Cap on the accumulated header block (HEADERS + CONTINUATION) so an endless
 // CONTINUATION stream can't exhaust memory (RFC 9113 §10.5.1 / CVE-2024-27316).
 const MAX_HEADER_BLOCK_SIZE = 1 << 20; // 1 MiB — far above any real header block
+const DEFAULT_MAX_HEADER_LIST_BYTES = 64 * 1024;
+const DEFAULT_MAX_HEADER_COUNT = 256;
 
 // Headers that are connection-specific and MUST NOT appear in HTTP/2 (§8.1.2.2).
 const FORBIDDEN_HEADERS = new Set([
@@ -73,6 +75,7 @@ export class H2Connection {
   private readonly localInitialWindow: number;
   /** Our connection-level receive window (grown at startup, replenished on consume). */
   private readonly connRecvWindow: number;
+  private connRecvAvailable: number;
   private readonly remote: RemoteSettings = {
     initialWindowSize: SPEC_INITIAL_WINDOW,
     maxFrameSize: DEFAULT_MAX_FRAME_SIZE,
@@ -119,6 +122,10 @@ export class H2Connection {
     this.localMaxFrameSize = s.maxFrameSize ?? DEFAULT_MAX_FRAME_SIZE;
     this.localInitialWindow = s.initialWindowSize ?? 1024 * 1024;
     this.connRecvWindow = options.connectionWindowSize ?? 64 * 1024 * 1024;
+    if (!validWindow(this.localInitialWindow) || !validConnectionWindow(this.connRecvWindow)) {
+      throw new RangeError("receive window sizes must be integers from 0 through 2^31-1");
+    }
+    this.connRecvAvailable = this.connRecvWindow;
     const headerTableSize = s.headerTableSize ?? 4096;
     const enablePush = s.enablePush ?? true;
 
@@ -137,6 +144,7 @@ export class H2Connection {
       enablePush,
       initialWindowSize: this.localInitialWindow,
       maxFrameSize: this.localMaxFrameSize,
+      maxHeaderListSize: DEFAULT_MAX_HEADER_LIST_BYTES,
     };
     this.ready = this.send({ type: FrameType.SETTINGS, streamId: 0, ack: false, settings: localSettings });
 
@@ -201,6 +209,10 @@ export class H2Connection {
       try {
         this.dispatch(frame);
       } catch (err) {
+        if (err instanceof H2Error && err.streamId !== undefined) {
+          this.resetStream(err.streamId, err.code);
+          continue;
+        }
         this.connectionError(err);
         return;
       }
@@ -260,9 +272,25 @@ export class H2Connection {
 
       case FrameType.DATA: {
         const stream = this.streams.get(frame.streamId);
-        if (stream) {
-          // Buffer; the receive windows are replenished only as the app reads the
-          // body (consumption-driven backpressure — see H2Stream/replenishRecvWindow).
+        const flowBytes = frame.flowControlledLength ?? frame.data.length;
+        if (flowBytes > this.connRecvAvailable) {
+          throw new H2Error("FLOW_CONTROL_ERROR", "DATA exceeds connection receive window");
+        }
+        this.connRecvAvailable -= flowBytes;
+        if (stream && !stream.remoteClosed && flowBytes > stream.recvWindow) {
+          // This frame exceeded only the stream budget. Discard its payload,
+          // return connection credit (including prior queued bytes), and reset
+          // that stream without disrupting healthy siblings.
+          this.replenishConnectionWindow(flowBytes);
+          this.resetStream(frame.streamId, "FLOW_CONTROL_ERROR");
+          return;
+        }
+        if (stream && !stream.remoteClosed) {
+          stream.recvWindow -= flowBytes;
+          // Padding is flow controlled but never reaches the body consumer.
+          // Return it immediately while application bytes remain consumption-driven.
+          const discardedPadding = flowBytes - frame.data.length;
+          if (discardedPadding > 0) this.replenishRecvWindow(frame.streamId, discardedPadding);
           stream.receiveData(frame.data, frame.endStream);
           // The peer half-closing does NOT end the stream while we are still
           // uploading — it becomes half-closed(remote) and our body pump (plus
@@ -272,10 +300,15 @@ export class H2Connection {
             stream.remoteClosed = true;
             this.retireIfFullyClosed(frame.streamId);
           }
-        } else if (frame.data.length > 0) {
-          // DATA on an unknown/retired stream: there is no consumer to drive
-          // replenishment, so return the connection window now (bytes discarded).
-          void this.send({ type: FrameType.WINDOW_UPDATE, streamId: 0, windowSizeIncrement: frame.data.length });
+        } else {
+          // A closed/retired stream has no consumer. Its full flow-controlled
+          // payload is discarded and returned to the connection window.
+          this.replenishConnectionWindow(flowBytes);
+          if (!stream && isIdleInboundStream(frame.streamId, this.nextStreamId, this.highestPromised)) {
+            throw new H2Error("PROTOCOL_ERROR", "DATA received on an idle stream");
+          }
+          if (stream) this.resetStream(frame.streamId, "STREAM_CLOSED");
+          else void this.send({ type: FrameType.RST_STREAM, streamId: frame.streamId, errorCode: errorCodeValue("STREAM_CLOSED") });
         }
         return;
       }
@@ -283,6 +316,7 @@ export class H2Connection {
       case FrameType.RST_STREAM: {
         const stream = this.streams.get(frame.streamId);
         if (stream) {
+          this.replenishConnectionWindow(stream.discardBuffered());
           stream.receiveReset(frame.errorCode);
           this.streams.delete(frame.streamId);
           this.wakeStreamSlots();
@@ -348,7 +382,11 @@ export class H2Connection {
     const pb = this.pendingHeaderBlock!;
     this.pendingHeaderBlock = undefined;
     const block = pb.fragments.length === 1 ? pb.fragments[0]! : concatBytes(pb.fragments);
-    const headers = this.decoder.decode(block); // HPACK decode (connection-global)
+    const headers = this.decoder.decode(block, {
+      maxHeaderListBytes: DEFAULT_MAX_HEADER_LIST_BYTES,
+      maxHeaderCount: DEFAULT_MAX_HEADER_COUNT,
+      streamId: pb.streamId,
+    }); // HPACK decode (connection-global); budget rejection keeps table state synchronized.
 
     if (pb.kind === "response") {
       const stream = this.streams.get(pb.streamId);
@@ -428,6 +466,7 @@ export class H2Connection {
       () => {
         if (this.streams.has(promisedId)) this.resetStream(promisedId, "CANCEL");
       },
+      this.localInitialWindow,
     );
     // A pushed stream is half-closed(local) from the start — the client never
     // sends a body on it — so its send side counts as done for retirement.
@@ -491,6 +530,7 @@ export class H2Connection {
       () => {
         if (this.streams.has(id)) this.resetStream(id, "CANCEL");
       },
+      this.localInitialWindow,
     );
     this.streams.set(id, stream); // reserves the slot synchronously
 
@@ -636,6 +676,7 @@ export class H2Connection {
     const stream = this.streams.get(id);
     void this.send({ type: FrameType.RST_STREAM, streamId: id, errorCode: errorCodeValue(code) });
     if (stream) {
+      this.replenishConnectionWindow(stream.discardBuffered());
       stream.state = "closed";
       this.streams.delete(id);
       this.wakeStreamSlots();
@@ -671,9 +712,17 @@ export class H2Connection {
    */
   private replenishRecvWindow(streamId: number, n: number): void {
     if (this.closedFlag || n <= 0) return;
-    if (this.streams.has(streamId)) {
+    const stream = this.streams.get(streamId);
+    if (stream && !stream.remoteClosed) {
+      stream.recvWindow += n;
       void this.send({ type: FrameType.WINDOW_UPDATE, streamId, windowSizeIncrement: n });
     }
+    this.replenishConnectionWindow(n);
+  }
+
+  private replenishConnectionWindow(n: number): void {
+    if (this.closedFlag || n <= 0) return;
+    this.connRecvAvailable += n;
     void this.send({ type: FrameType.WINDOW_UPDATE, streamId: 0, windowSizeIncrement: n });
   }
 
@@ -725,6 +774,19 @@ function hex(b: Uint8Array): string {
   let s = "";
   for (const x of b) s += x.toString(16).padStart(2, "0");
   return s;
+}
+
+function validWindow(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= 0x7fffffff;
+}
+
+function validConnectionWindow(value: number): boolean {
+  return Number.isInteger(value) && value >= SPEC_INITIAL_WINDOW && value <= 0x7fffffff;
+}
+
+function isIdleInboundStream(streamId: number, nextLocalStreamId: number, highestPromised: number): boolean {
+  if (streamId === 0) return true;
+  return streamId % 2 === 1 ? streamId >= nextLocalStreamId : streamId > highestPromised;
 }
 
 function pseudo(headers: Header[], name: string): string | undefined {
