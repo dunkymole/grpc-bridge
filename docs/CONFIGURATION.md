@@ -56,6 +56,37 @@ atomic file replacement to avoid partially written snapshots. Compose mounts
 Removing a destination blocks new connections but does not close existing ones.
 `UPSTREAM` remains implicitly allowed independently of this file.
 
+## TypeScript connection options
+
+`createBridgeConnection()`, `openBridgeConnection()`, and
+`createSharedBridgeConnection()` accept the same `BridgeConnectionOptions`:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `url` | Required | Public `ws://` or `wss://` tunnel endpoint. |
+| `target` | Omitted | Exact backend `host:port`; omission uses the bridge's default upstream. |
+| `tunnelToken` | Omitted | Static string or sync/async provider for the outer tunnel credential. |
+| `backendBearerToken` | Omitted | Static string or sync/async provider for default inner RPC authorization. |
+| `authority` | `target`, then `backend` | HTTP/2 `:authority`; does not change the TCP destination. |
+| `scheme` | `http` | HTTP/2 `:scheme`, either `http` or `https`; does not enable upstream TLS. |
+| `interceptors` | Empty | Readonly list of standard Connect interceptors, once per logical RPC. |
+| `retry` | Transparent retries only | Optional policies, replay budgets, and throttling; see the [retry reference](../web/RETRIES.md#configure-retries). |
+| `onStateChange` | Omitted | Listener for `connecting`, `open`, `transient_failure`, and `closed`, with optional reason/error. |
+
+Token providers are resolved before each new physical connection, not before each
+RPC. Use a per-call or interceptor header for credentials that must change on
+every RPC. A shared handle captures its configuration when constructed; create a
+new handle for a new destination or identity. See the
+[lifecycle and cleanup guide](../web/README.md#lifecycle-and-cleanup).
+
+For client-specific behavior, wrap a connection or lease's transport using
+`interceptTransport(transport, { baseUrl, interceptors })`. The required `baseUrl`
+is a logical backend URL for interceptor requests; it does not open a connection
+or alter routing. The optional interceptor list is captured by the wrapper.
+Per-client interceptors run before connection-level interceptors, and later
+`header.set()` calls take precedence. Both chains remain outside retries. See the
+[examples and precedence rules](../web/README.md#connect-interceptors).
+
 ## Client authentication and forwarding
 
 `openBridgeConnection({ url, target, tunnelToken })` controls the outer tunnel.
@@ -66,8 +97,8 @@ offered as `auth.<token>` in the WebSocket subprotocol list, never in the URL.
 
 `backendBearerToken` optionally adds
 `authorization: Bearer <token>` to each RPC, for every RPC shape. Omitted or empty
-values send no default authorization. Explicit per-call `authorization`
-metadata takes precedence (header names are case-insensitive). This option can
+values send no default authorization. An `authorization` header left by a call or
+interceptor takes precedence (header names are case-insensitive). This option can
 carry a separate backend credential; it does not change tunnel authentication.
 
 To forward the same token used for tunnel access:
@@ -75,7 +106,9 @@ To forward the same token used for tunnel access:
 ```ts
 import { createClient } from "@connectrpc/connect";
 import { openBridgeConnection } from "@dunkymole/grpc-bridge";
+import { DemoService } from "./gen/demo_pb.js";
 
+// Supply the public URL, allowed target, and current token from your application.
 const connection = await openBridgeConnection({
   url: bridgeUrl,
   target,
@@ -109,7 +142,7 @@ network legs are not trusted. The bridge does not inspect, inject, or validate R
 authorization metadata. The demo Python service does not enforce authentication.
 Forwarding a JWT as backend metadata does not add JWT verification to the bridge.
 
-## Example runner environment
+## Client recovery and RPC retry settings
 
 Managed client channels automatically reconnect with a 1-second initial delay,
 a 1.6 multiplier, a 30-second cap, and ±20% jitter applied after the cap. These
@@ -123,6 +156,8 @@ The [complete retry settings table and example](../web/RETRIES.md#configure-retr
 document their defaults and constraints. These are client options, not bridge
 environment variables; the Go relay does not decode RPCs or implement retries.
 
+## Example runner environment
+
 | Variable               | Default                      | Meaning                                                          |
 | ---------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `TUNNEL_URL`           | `ws://localhost:8080/tunnel` | Public bridge endpoint.                                          |
@@ -131,6 +166,9 @@ environment variables; the Go relay does not decode RPCs or implement retries.
 | `FORWARD_TUNNEL_TOKEN` | `false`                      | Literal `true` forwards the tunnel token as RPC bearer metadata. |
 
 These are client settings for `cd web && npm run example`, not bridge settings.
+The runner executes the RPC examples and then the independent-client interceptor
+example. `FORWARD_TUNNEL_TOKEN` applies to the RPC examples; the interceptor example
+uses the outer tunnel credential but sends only its own non-authentication metadata.
 
 ## Runtime and demo deployment settings
 

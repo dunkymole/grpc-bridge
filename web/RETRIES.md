@@ -88,6 +88,10 @@ All option values use milliseconds or bytes, not service-config duration strings
 | `backoffMultiplier` | Positive finite number | Multiplier after each ordinary backoff |
 | `retryableStatusCodes` | Nonempty list of non-OK `Code` values | Statuses eligible before commitment |
 
+Both buffer sizes must be nonnegative safe integers. Invalid policy, buffer, or
+throttle values throw `TypeError` when a managed connection is created (on first
+acquisition for a shared handle).
+
 `throttling.maxTokens` and `throttling.tokenRatio` must be positive and finite.
 The bucket starts full. A matching failure subtracts one token; a successful RPC
 adds `tokenRatio`, up to `maxTokens`. Configured retries stop when tokens are at or
@@ -116,7 +120,16 @@ malformed, or repeated value prevents retry. The call deadline still bounds that
 delay. Configured attempts send `grpc-previous-rpc-attempts: 1`, then `2`, and so on;
 the client owns this metadata and replaces any caller-supplied value.
 
-The original deadline covers connection selection, all attempts, and retry delays.
+Connection-level and per-client Connect interceptor chains run once per logical
+RPC, outside the retry layer. Headers they produce are copied to each attempt;
+the retry layer still owns `grpc-previous-rpc-attempts`, and attempt deadlines can
+reduce `grpc-timeout`. Backend bearer-token providers run on connection creation,
+so a replacement session can supply a refreshed default credential when no
+explicit `authorization` header was provided. See the
+[interceptor guide](README.md#connect-interceptors).
+
+The original deadline covers interceptors, connection selection, all attempts,
+and retry delays.
 Cancellation and explicit connection shutdown stop pending retries. A retried call
 waits for connectivity; a fresh call still follows its `waitForReady` setting.
 Always consume or cancel response iterators and release/close their owning connection.

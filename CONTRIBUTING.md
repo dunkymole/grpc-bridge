@@ -1,6 +1,7 @@
 # Contributing
 
-Issues and pull requests are welcome. Start with the README and architecture.
+Issues and pull requests are welcome. Start with the [README](README.md) and
+[architecture](docs/DESIGN.md).
 
 Documentation must be self-contained and describe the project's behavior,
 architecture, and operation for readers with no prior context.
@@ -14,7 +15,10 @@ changes also run the Compose interoperability suite and the browser's checks.
 Use `gofmt` for Go. Keep generated code synchronized with `proto/demo.proto`.
 Include a focused regression test for a protocol bug and explain what changed.
 
-No changes should automatically replay user operations after a disconnect.
+Preserve the [retry contract](web/RETRIES.md): transparent retries require positive
+transport evidence, and additional RPC retries require an explicit client policy.
+Do not replay committed calls or resume established streams after a disconnect.
+Keep application interceptors outside retry attempts and preserve their metadata.
 Discuss wire-profile changes before implementation; incompatible changes require
 a new profile name. Contributions are made under the repository's MIT license.
 

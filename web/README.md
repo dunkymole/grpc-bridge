@@ -10,14 +10,53 @@ breaking API changes; patch releases remain backward-compatible within that mino
 
 ## Install
 
-The package is not yet published to npm. Build a local tarball with `npm pack`
-from this directory and install that `.tgz` in a consuming project. The command
-below is the registry installation form for a future published release.
+The package is not yet published to npm. From the repository's `web/` directory,
+install its build dependencies and create a local tarball:
 
 ```sh
-npm install @dunkymole/grpc-bridge \
-  @connectrpc/connect @bufbuild/protobuf
+npm ci
+npm pack
 ```
+
+Then, from your consuming project, install the emitted file (adjust the path):
+
+```sh
+npm install /path/to/dunkymole-grpc-bridge-0.1.0.tgz @connectrpc/connect@2.2.0 @bufbuild/protobuf@2.15.0
+```
+
+`npm pack` builds the package automatically. The pinned versions above match its
+current runtime dependencies. Generate service descriptors from your `.proto`
+files with Protobuf-ES; generated demo code is not part of the package. The examples
+below use application-owned generated services. `session` denotes your application's
+current credentials, not a library-provided object. For a ready-to-run local backend
+and demo descriptors, use the [repository examples](https://github.com/dunkymole/grpc-bridge/tree/main/web/examples).
+
+## Choose a connection API
+
+| API | When to use it |
+| --- | --- |
+| `createBridgeConnection(options)` | Return immediately, including during an initial outage; close explicitly when finished. |
+| `openBridgeConnection(options)` | Await the first connection attempt; reject and close if that attempt fails. |
+| `createSharedBridgeConnection(options)` | Open lazily on `acquire()` and share reference-counted leases between consumers. |
+| `interceptTransport(transport, options)` | Add client-specific interceptors to an existing transport without changing connection ownership. |
+
+The first three accept the same `BridgeConnectionOptions`:
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `url` | Required | Public `ws://` or `wss://` bridge endpoint. |
+| `target` | Omitted | Exact backend `host:port`; omission selects the bridge's configured upstream. |
+| `tunnelToken` | Omitted | Outer tunnel token, as a string or sync/async provider. |
+| `backendBearerToken` | Omitted | Default inner RPC bearer token, as a string or sync/async provider. |
+| `authority` | `target`, then `backend` | HTTP/2 authority, independent of destination selection. |
+| `scheme` | `http` | HTTP/2 scheme (`http` or `https`); upstream TLS is controlled by the bridge. |
+| `interceptors` | Empty | Standard Connect interceptor list for every client on the connection. |
+| `retry` | Transparent retries only | Optional configured retries and replay limits; see [retry settings](RETRIES.md#configure-retries). |
+| `onStateChange` | Omitted | Lifecycle listener receiving state and optional reason/error. |
+
+Providers may return a string, `undefined`, or a promise of either. Both providers
+run before each new physical connection; they are not per-RPC callbacks. For
+per-RPC credentials, use a call header or interceptor instead.
 
 ## Open a connection
 
@@ -37,10 +76,12 @@ const connection = await openBridgeConnection({
 });
 
 const client = createClient(Greeter, connection.transport);
-const reply = await client.sayHello({ name: "Ada" });
-console.log(reply.message);
-
-await connection.close();
+try {
+  const reply = await client.sayHello({ name: "Ada" });
+  console.log(reply.message);
+} finally {
+  await connection.close();
+}
 ```
 
 The connection is a long-lived channel: existing typed clients keep working after
@@ -79,8 +120,9 @@ const connection = await openBridgeConnection({
 The list is captured when the connection or shared handle is created. Interceptors
 apply to all four RPC shapes in Connect order: requests enter the first listed
 interceptor first, and responses pass back through the chain in reverse order.
-They run once per logical RPC; transparent and configured retries, including
-connection replacement, happen inside the chain and retain its request metadata.
+The transport invokes them once per logical RPC; transparent and configured
+retries, including connection replacement, happen inside the chain and retain
+its request metadata.
 Interceptors can wrap request/response messages, inspect headers and trailers,
 use call context values, or reject a call. The call signal includes its deadline.
 Omitting the list or passing an empty list preserves the existing transport.
@@ -90,7 +132,9 @@ The interceptor request URL identifies the logical backend using `scheme`,
 Changing interceptor metadata does not change destination selection or the outer
 WebSocket handshake. `backendBearerToken` remains an independent default;
 an `authorization` header supplied by a call or interceptor takes precedence.
-The bridge does not inspect or interpret application metadata.
+The bridge does not inspect or interpret application metadata. Examples that use
+`crypto.randomUUID()` require a secure browser context (HTTPS or localhost), or
+Node 24+. Use your application's ID generator if needed.
 
 ### Per-client interceptors on a shared connection
 
@@ -161,6 +205,8 @@ connection-level interceptors in declaration order, then connection selection an
 retries. Responses unwind in reverse order. All four RPC shapes follow this order.
 Both chains run once per logical call, even when a retry replaces the connection;
 the final request metadata is retained on every attempt.
+An interceptor can itself invoke `next()` more than once; such application-defined
+retries are separate from the bridge's built-in retry policy.
 
 Each call starts with a fresh copy of its headers, so concurrent clients and the
 original transport do not inherit another client’s changes. For the same header,
@@ -199,7 +245,7 @@ shutdown retain their existing behavior. Wrap the managed connection or lease’
 transport to keep client interceptors outside its retry layer.
 
 For a runnable example using the repository's generated `DemoService`, see
-[`examples/interceptors.ts`](examples/interceptors.ts). With the Compose stack
+[`examples/interceptors.ts`](https://github.com/dunkymole/grpc-bridge/blob/main/web/examples/interceptors.ts). With the Compose stack
 running, run `npm run example` from `web/`. It creates two clients with distinct
 client labels, runs concurrent calls over shared leases, and releases them.
 It also shows a client overriding a shared metadata default. The Python demo
@@ -333,10 +379,15 @@ not implemented.
 
 ## Low-level API
 
-Advanced users can import `openChannel()`, `createTunnelTransport()`, `inputQueue()`,
-and the `grpc-tunnel.v1` `PROFILE` constant. `createTunnelTransport()` accepts
-`bearerToken`, `authority`, and `scheme`. The managed API is preferred because it
-owns cleanup and lifecycle reporting.
+Advanced users can import `openChannel(url, token?, { target?, signal? })`,
+`createTunnelTransport(channel, options?)`, `inputQueue()`, and the `grpc-tunnel.v1`
+`PROFILE` constant. `createTunnelTransport()` accepts `bearerToken`, `authority`,
+and `scheme`; these low-level defaults are `undefined`, `backend`, and `http`.
+Unlike the managed API, it does not infer authority from the selected target.
+`openChannel()` represents one physical session, with `close()`, `closed`, and
+`draining` lifecycle hooks; it does not reconnect or retry. Use `interceptTransport()`
+to add interceptors if composing these low-level APIs yourself. Prefer managed
+connections for recovery, retry policy, lifecycle reporting, and ownership.
 
 ## Compatibility
 
@@ -350,15 +401,23 @@ a 1 MiB receive queue and sends in 16 KiB chunks.
 
 The package is ESM-only and side-effect free. It ships JavaScript, TypeScript
 declarations, declaration maps, source maps with embedded sources, the MIT license,
-and third-party notices. A production browser bundle including runtime dependencies
-is approximately 73.4 kB minified and 23.1 kB gzip. Run `npm run size` to reproduce the bundle
-measurement. Demo UI and generated demo protobuf code are excluded.
+and third-party notices. On 29 September 2026, bundling all public exports and
+runtime dependencies measured 76.7 KiB minified and 24.1 KiB gzip (1 KiB = 1,024
+bytes). Run `npm run size` from the source checkout to reproduce this measurement;
+its output labels these values as kB. A consuming application's bundle depends on
+tree shaking and its own generated messages. Demo UI and generated demo protobuf
+code are excluded from the package.
 
 ## Examples
 
-- `src/demo.ts` is the browser example built into the repository's live lab.
-- `examples/client.ts` contains all four typed RPC patterns.
-- `examples/run.ts` runs those examples under Node 24+.
+- [Browser demo](https://github.com/dunkymole/grpc-bridge/blob/main/web/src/demo.ts): the repository's interactive lab.
+- [Typed RPC examples](https://github.com/dunkymole/grpc-bridge/blob/main/web/examples/client.ts): all four RPC shapes, metadata, deadlines, and cancellation.
+- [Interceptor example](https://github.com/dunkymole/grpc-bridge/blob/main/web/examples/interceptors.ts): independent client labels and shared defaults.
+- [Node runner](https://github.com/dunkymole/grpc-bridge/blob/main/web/examples/run.ts): runs both sets with `npm run example` from the source checkout.
+
+Example sources are maintained in the repository and are not included in the
+package tarball. Browser demos require a running bridge; the Node runner uses
+`TUNNEL_URL`, `TUNNEL_TOKEN`, `BACKEND_TARGET`, and optional `FORWARD_TUNNEL_TOKEN`.
 
 See the [project repository](https://github.com/dunkymole/grpc-bridge) for the Go
 bridge, Python test backend, complete configuration, protocol design, and security
