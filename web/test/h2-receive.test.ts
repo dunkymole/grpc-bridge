@@ -139,10 +139,11 @@ test("DATA racing a declined promised stream is discarded without killing siblin
   }));
   await tick();
   const start = s.sent.length;
-  s.incoming.enqueue(dataFrame(2, new Uint8Array([7])));
+  s.incoming.enqueue(dataFrame(4, new Uint8Array([7])));
   await tick();
   const updates = sentFrames(s.sent.slice(start)).filter((frame) => frame.type === FrameType.WINDOW_UPDATE);
   assert.equal(updates.filter((frame) => frame.streamId === 0).reduce((n, f) => n + f.windowSizeIncrement, 0), 1);
+  assert.ok(sentFrames(s.sent).some((frame) => frame.type === FrameType.RST_STREAM && frame.streamId === 4 && frame.errorCode === errorCodeValue("STREAM_CLOSED")));
   assert.equal(s.connection.isClosed, false);
 
   const sibling = await openResponse(s, 3);
