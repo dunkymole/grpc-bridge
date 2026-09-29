@@ -15,6 +15,8 @@ read at process startup; changing them requires restarting/recreating the bridge
 | Environment variable | Flag               | Binary default          | Meaning                                                                                                                                                   |
 | -------------------- | ------------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LISTEN`             | `-listen`          | `127.0.0.1:8080`        | HTTP listener. Image sets `0.0.0.0:8080`; Compose publishes only host loopback.                                                                           |
+| `HEALTH_LISTEN`      | `-health-listen`   | `127.0.0.1:8082`        | Private plaintext HTTP listener for health probes. Keep it on loopback or a private network; it is not published by Compose.                              |
+| `DRAIN_GRACE_PERIOD` | `-drain-grace-period` | `30s`                | Maximum time to finish active tunnels after the first shutdown signal; must be nonnegative and at most 10 minutes. A second signal forces immediate closure. |
 | `UPSTREAM`           | `-upstream`        | `127.0.0.1:50051`       | Default, implicitly allowed destination. Compose sets `backend:50051`.                                                                                    |
 | `TARGETS_FILE`       | `-targets-file`    | empty                   | JSON destination policy path. Compose sets `/config/targets.json`.                                                                                        |
 | `ALLOWED_ORIGIN`     | `-origin`          | `http://localhost:8080` | Exact permitted browser Origin, including scheme and port. Native clients may omit Origin.                                                                |
@@ -28,7 +30,7 @@ read at process startup; changing them requires restarting/recreating the bridge
 | `TLS_KEY`            | `-tls-key`         | empty                   | Corresponding PEM private key file. Required when a certificate is supplied.                                                                              |
 | `UPSTREAM_TLS`       | `-upstream-tls`    | `false`                 | Environment enables TLS only for literal `true`; verifies default backend certificate and requires `h2` ALPN.                                             |
 | `ASSETS`             | `-assets`          | `web/dist`              | Demo asset directory. Image sets `/web`.                                                                                                                  |
-| none                 | `-healthcheck`     | `false`                 | Probe `http://127.0.0.1:8080/healthz` with a two-second timeout and exit. This address is fixed; override Docker's check for other ports or direct HTTPS. |
+| none                 | `-healthcheck`     | `false`                 | Probe `http://HEALTH_LISTEN/readyz` with a two-second timeout and exit. Uses the configured private health listener, including when the public listener uses TLS. |
 | none                 | `-h`, `-help`      | n/a                     | Print Go flag help.                                                                                                                                       |
 
 The stock Compose file passes only the environment variables shown in its
@@ -233,9 +235,13 @@ uses the outer tunnel credential but sends only its own non-authentication metad
   container default `0.0.0.0:50051`.
 - Python image sets `PYTHONDONTWRITEBYTECODE=1` and `PYTHONUNBUFFERED=1`.
 - Image health checks run every 10 seconds with a three-second Docker timeout.
-  `/healthz` tests only the default backend's TCP reachability, with a one-second dial
-  timeout. `/metrics` exposes [connection, traffic, failure, and dial metrics](METRICS.md).
-  Metrics are always enabled on the same listener, without tunnel-token authentication.
+  `-healthcheck` probes private `/readyz`; `/livez` stays successful during drain,
+  while `/readyz` returns 503 after shutdown begins. Public HTTP/TLS also serves these
+  endpoints. `/healthz` tests only the default backend's TCP reachability, with a
+  one-second dial timeout. `/metrics` exposes [connection, traffic, failure, dial,
+  and drain metrics](METRICS.md). Metrics are always enabled on the public listener,
+  without tunnel-token authentication. The private health listener defaults to port
+  8082, separate from the reference admission service's default port 8081.
 
 Go also supports its standard runtime environment variables; the project only
 sets `GOMEMLIMIT`. These do not replace container memory limits.
@@ -252,7 +258,8 @@ sets `GOMEMLIMIT`. These do not replace container memory limits.
 | WebSocket upgrade response write deadline        | 10 seconds                                              |
 | HTTP header read / idle timeout                  | 5 / 30 seconds                                          |
 | HTTP `MaxHeaderBytes` setting                    | 8,192 bytes (Go server adds internal parsing allowance) |
-| Graceful HTTP shutdown timeout                   | 5 seconds; active tunnels are closed immediately        |
+| Graceful tunnel drain                            | 30 seconds by default; configurable up to 10 minutes    |
+| Final HTTP server shutdown                       | 5 seconds after a graceful tunnel drain                 |
 | Destination string / policy file limit           | 320 bytes / 64 KiB                                      |
 | Browser handshake / stalled send timeout         | 5 / 30 seconds                                          |
 | Browser receive queue / outgoing chunk           | 1 MiB / 16 KiB                                          |

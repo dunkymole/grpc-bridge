@@ -230,11 +230,19 @@ The default demo uses loopback HTTP/WS. For external deployment configure TLS,
 an appropriate origin, and authentication. Do not log WebSocket request headers
 containing the token. There is no arbitrary upstream URL routing.
 
-`/healthz` probes backend TCP availability; `/metrics` exposes connection counts,
-establishment failures, forwarded bytes, and backend dial duration. See the
+`/livez` reports process liveness and remains successful during shutdown drain;
+`/readyz` returns 503 once the bridge starts draining. A private plaintext health
+listener on `HEALTH_LISTEN` (default `127.0.0.1:8082`) serves these probes, so Docker
+healthchecks work when the public listener uses HTTPS/WSS. Compose does not publish
+the private port. `/healthz` probes default-backend TCP availability. `/metrics`
+exposes connection, traffic, failure, dial, and drain metrics; see the
 [metrics reference](docs/METRICS.md) for definitions and Prometheus queries.
-Health checks cover the default upstream only. The built-in Docker healthcheck
-uses local HTTP; override it if enabling direct HTTPS inside the container.
+
+On the first SIGTERM/SIGINT the bridge rejects new tunnels, keeps liveness and
+readiness observable, and lets existing tunnels finish for `DRAIN_GRACE_PERIOD`
+(default 30 seconds, maximum 10 minutes). At the deadline it closes both tunnel
+legs. A second signal forces immediate closure. Drain state and graceful/forced
+shutdown counts are exported in `/metrics`.
 
 ## Memory
 

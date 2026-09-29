@@ -108,10 +108,59 @@ type gateway struct {
 	config
 	slots      chan struct{}
 	mu         sync.Mutex
-	active     map[net.Conn]struct{}
+	active     map[*activeTunnel]struct{}
+	handshakes map[*pendingHandshake]struct{}
 	principals map[string]int
 	metrics    metrics
-	stopping   bool
+	draining   bool
+	serving    bool
+	changed    chan struct{}
+}
+
+type pendingHandshake struct {
+	cancel context.CancelFunc
+}
+
+type activeTunnel struct {
+	client, upstream net.Conn
+	connMu           sync.Mutex
+	closed           bool
+	forced           atomic.Bool
+}
+
+func (t *activeTunnel) close() {
+	t.connMu.Lock()
+	t.closed = true
+	client, upstream := t.client, t.upstream
+	t.connMu.Unlock()
+	closeTransportConn(client)
+	closeTransportConn(upstream)
+}
+
+func (t *activeTunnel) setClient(client net.Conn) bool {
+	t.connMu.Lock()
+	defer t.connMu.Unlock()
+	if t.closed {
+		return false
+	}
+	t.client = client
+	return true
+}
+
+// Close the transport socket directly. tls.Conn.Close may send close_notify
+// using its own five-second write deadline, which would serialize forced
+// shutdown across tunnels whose peers stopped reading.
+func closeTransportConn(conn net.Conn) {
+	switch c := conn.(type) {
+	case nil:
+		return
+	case *countedConn:
+		closeTransportConn(c.Conn)
+	case *tls.Conn:
+		_ = c.NetConn().Close()
+	default:
+		_ = c.Close()
+	}
 }
 
 func newGateway(c config) *gateway {
@@ -127,7 +176,132 @@ func newGateway(c config) *gateway {
 	if c.admissionClient == nil {
 		c.admissionClient = newAdmissionHTTPClient()
 	}
-	return &gateway{config: c, slots: make(chan struct{}, c.maxConnections), active: make(map[net.Conn]struct{}), principals: make(map[string]int)}
+	return &gateway{config: c, slots: make(chan struct{}, c.maxConnections), active: make(map[*activeTunnel]struct{}), handshakes: make(map[*pendingHandshake]struct{}), principals: make(map[string]int), changed: make(chan struct{})}
+}
+
+func (g *gateway) signalStateLocked() {
+	close(g.changed)
+	g.changed = make(chan struct{})
+}
+
+func (g *gateway) beginHandshake(parent context.Context) (context.Context, *pendingHandshake, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.draining {
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithCancel(parent)
+	handshake := &pendingHandshake{cancel: cancel}
+	g.handshakes[handshake] = struct{}{}
+	g.signalStateLocked()
+	return ctx, handshake, true
+}
+
+func (g *gateway) finishHandshake(handshake *pendingHandshake) {
+	g.mu.Lock()
+	delete(g.handshakes, handshake)
+	g.signalStateLocked()
+	g.mu.Unlock()
+	handshake.cancel()
+}
+
+func (g *gateway) isDraining() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.draining
+}
+
+func (g *gateway) setServing() {
+	g.mu.Lock()
+	g.serving = true
+	g.signalStateLocked()
+	g.mu.Unlock()
+}
+
+func (g *gateway) isReady() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.serving && !g.draining
+}
+
+func (g *gateway) beginDrain() {
+	g.mu.Lock()
+	var cancels []context.CancelFunc
+	if !g.draining {
+		g.draining = true
+		g.metrics.draining.Store(1)
+		for handshake := range g.handshakes {
+			cancels = append(cancels, handshake.cancel)
+		}
+		g.signalStateLocked()
+	}
+	g.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
+func (g *gateway) registerTunnel(tunnel *activeTunnel) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.draining {
+		return false
+	}
+	g.active[tunnel] = struct{}{}
+	g.signalStateLocked()
+	return true
+}
+
+func (g *gateway) completeHandshake(handshake *pendingHandshake) bool {
+	g.mu.Lock()
+	if g.draining {
+		g.mu.Unlock()
+		return false
+	}
+	delete(g.handshakes, handshake)
+	g.signalStateLocked()
+	g.mu.Unlock()
+	handshake.cancel()
+	return true
+}
+
+func (g *gateway) unregisterTunnel(tunnel *activeTunnel) {
+	g.mu.Lock()
+	delete(g.active, tunnel)
+	g.signalStateLocked()
+	g.mu.Unlock()
+}
+
+func (g *gateway) waitForDrain(ctx context.Context) bool {
+	for {
+		g.mu.Lock()
+		if len(g.active) == 0 && len(g.handshakes) == 0 {
+			g.mu.Unlock()
+			return true
+		}
+		changed := g.changed
+		g.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-changed:
+		}
+	}
+}
+
+func (g *gateway) forceCloseActive() {
+	g.mu.Lock()
+	tunnels := make([]*activeTunnel, 0, len(g.active))
+	for tunnel := range g.active {
+		if tunnel.forced.CompareAndSwap(false, true) {
+			tunnels = append(tunnels, tunnel)
+		}
+	}
+	g.mu.Unlock()
+	g.metrics.forcedClosures.Add(uint64(len(tunnels)))
+	for _, tunnel := range tunnels {
+		tunnel.close()
+	}
 }
 func contains(value, token string) bool {
 	for _, v := range strings.Split(value, ",") {
@@ -186,7 +360,7 @@ func validTunnelCredential(credential string) bool {
 func (g *gateway) acquirePrincipal(subject string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.stopping || g.principals[subject] >= g.maxPerPrincipal {
+	if g.draining || g.principals[subject] >= g.maxPerPrincipal {
 		return false
 	}
 	g.principals[subject]++
@@ -209,6 +383,38 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.metrics.attempts.Add(1)
+	handshakeCtx, handshake, allowed := g.beginHandshake(r.Context())
+	if !allowed {
+		g.metrics.fail("shutdown")
+		http.Error(w, "bridge is draining", http.StatusServiceUnavailable)
+		return
+	}
+	handshakePending := true
+	var heldSlot, heldPrincipal, activeRegistered bool
+	var principal string
+	var tunnel *activeTunnel
+	var clientConn net.Conn
+	var upstream net.Conn
+	defer func() {
+		if tunnel != nil {
+			tunnel.close()
+		} else {
+			closeTransportConn(clientConn)
+			closeTransportConn(upstream)
+		}
+		if heldPrincipal {
+			g.releasePrincipal(principal)
+		}
+		if heldSlot {
+			<-g.slots
+		}
+		if activeRegistered {
+			g.unregisterTunnel(tunnel)
+		}
+		if handshakePending {
+			g.finishHandshake(handshake)
+		}
+	}()
 	failure := "upgrade"
 	defer func() {
 		if failure != "" {
@@ -244,7 +450,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	select {
 	case g.slots <- struct{}{}:
-		defer func() { <-g.slots }()
+		heldSlot = true
 	default:
 		reject("connection capacity reached", 503, "capacity")
 		return
@@ -254,10 +460,14 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reject("destination unavailable or not allowed", status, map[int]string{400: "destination", 403: "destination_denied", 503: "policy"}[status])
 		return
 	}
-	principal := "anonymous"
+	if g.isDraining() {
+		reject("bridge is draining", http.StatusServiceUnavailable, "shutdown")
+		return
+	}
+	principal = "anonymous"
 	var grantExpiry time.Time
 	if g.admissionURL != "" {
-		grant, grantStatus := g.authorizeTarget(r.Context(), credential, destination)
+		grant, grantStatus := g.authorizeTarget(handshakeCtx, credential, destination)
 		if grantStatus != 0 {
 			failureReason := "admission"
 			if grantStatus == http.StatusUnauthorized || grantStatus == http.StatusForbidden {
@@ -271,11 +481,15 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if g.token != "" {
 		principal = "static"
 	}
+	if g.isDraining() {
+		reject("bridge is draining", http.StatusServiceUnavailable, "shutdown")
+		return
+	}
 	if !g.acquirePrincipal(principal) {
 		reject("principal connection capacity reached", 429, "capacity")
 		return
 	}
-	defer g.releasePrincipal(principal)
+	heldPrincipal = true
 	authorizedAt := time.Now()
 	tunnelDeadline := authorizedAt.Add(g.maxTunnelLifetime)
 	if !grantExpiry.IsZero() && grantExpiry.Before(tunnelDeadline) {
@@ -285,16 +499,15 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if tunnelDeadline.Before(dialDeadline) {
 		dialDeadline = tunnelDeadline
 	}
-	ctx, cancel := context.WithDeadline(r.Context(), dialDeadline)
+	ctx, cancel := context.WithDeadline(handshakeCtx, dialDeadline)
 	defer cancel()
 	dialStart := time.Now()
-	var upstream net.Conn
 	if useTLS {
 		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}, RootCAs: g.upstreamRoots}
 		d := &tls.Dialer{NetDialer: &net.Dialer{}, Config: tlsConfig}
 		upstream, err = d.DialContext(ctx, "tcp", destination)
 		if err == nil && upstream.(*tls.Conn).ConnectionState().NegotiatedProtocol != "h2" {
-			upstream.Close()
+			closeTransportConn(upstream)
 			err = errors.New("upstream did not negotiate h2")
 		}
 	} else {
@@ -306,9 +519,18 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstream = &countedConn{Conn: upstream, bytes: &g.metrics.toBackend}
-	defer upstream.Close()
+	tunnel = &activeTunnel{upstream: upstream}
+	if !g.registerTunnel(tunnel) {
+		failure = "shutdown"
+		return
+	}
+	activeRegistered = true
 	if !time.Now().Before(tunnelDeadline) {
 		reject("tunnel grant expired", http.StatusForbidden, "auth")
+		return
+	}
+	if g.isDraining() {
+		reject("bridge is draining", http.StatusServiceUnavailable, "shutdown")
 		return
 	}
 	h, ok := w.(http.Hijacker)
@@ -320,25 +542,27 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	clientConn = conn
+	if !tunnel.setClient(conn) {
+		closeTransportConn(conn)
+		clientConn = nil
+		failure = "shutdown"
+		return
+	}
+	clientConn = nil // the active tunnel now owns this socket
 	if !time.Now().Before(tunnelDeadline) {
 		// The peer can stall a response flush indefinitely here. The grant has
 		// already expired, so closing is sufficient and releases both legs and
 		// the admission slot through the normal defers.
 		return
 	}
-	g.mu.Lock()
-	if g.stopping {
+	if !g.completeHandshake(handshake) {
 		failure = "shutdown"
-		g.mu.Unlock()
 		return
 	}
-	g.active[conn] = struct{}{}
-	g.mu.Unlock()
-	defer func() { g.mu.Lock(); delete(g.active, conn); g.mu.Unlock() }()
+	handshakePending = false
 	lifetimeTimer := time.AfterFunc(time.Until(tunnelDeadline), func() {
-		_ = conn.Close()
-		_ = upstream.Close()
+		tunnel.close()
 	})
 	defer lifetimeTimer.Stop()
 	if !time.Now().Before(tunnelDeadline) {
@@ -375,7 +599,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			case <-ticker.C:
 				if ws.writeFrame(9, []byte("alive")) != nil {
-					conn.Close()
+					tunnel.close()
 					return
 				}
 			}
@@ -384,7 +608,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		defer conn.Close()
+		defer tunnel.close()
 		buf := make([]byte, bufferSize)
 		for {
 			n, e := upstream.Read(buf)
@@ -403,18 +627,13 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !errors.Is(err, io.EOF) {
 		_ = ws.closeWith(1002)
 	}
-	upstream.Close()
-	conn.Close()
+	tunnel.close()
 	<-finished
 }
 
 func (g *gateway) stop() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.stopping = true
-	for c := range g.active {
-		c.Close()
-	}
+	g.beginDrain()
+	g.forceCloseActive()
 }
 
 type socket struct {
@@ -621,8 +840,117 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
+const maxDrainGrace = 10 * time.Minute
+const finalShutdownTimeout = 5 * time.Second
+
+func healthcheckURL(address string) (string, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || port == "" {
+		return "", errors.New("health listener must be a host:port address")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", errors.New("health listener must use a concrete TCP port")
+	}
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/readyz", nil
+}
+
+func healthRoutes(mux *http.ServeMux, g *gateway, upstream string) {
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok\n")
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if !g.isReady() {
+			http.Error(w, "bridge is draining", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ready\n")
+	})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if !g.isReady() {
+			http.Error(w, "bridge is draining", http.StatusServiceUnavailable)
+			return
+		}
+		conn, err := net.DialTimeout("tcp", upstream, time.Second)
+		if err != nil {
+			http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = conn.Close()
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok\n")
+	})
+}
+
+func shutdownOnSignal(g *gateway, server, healthServer *http.Server, signals <-chan os.Signal, grace time.Duration) {
+	<-signals
+	g.beginDrain()
+	log.Printf("shutdown signal received; draining tunnels for up to %s", grace)
+	graceCtx, cancelGrace := context.WithTimeout(context.Background(), grace)
+	drained := make(chan struct{})
+	go func() {
+		if g.waitForDrain(graceCtx) {
+			close(drained)
+		}
+	}()
+	forced := false
+	select {
+	case <-drained:
+		g.metrics.drainCompletions.Add(1)
+		log.Printf("drain completed before the grace deadline")
+	case <-graceCtx.Done():
+		forced = true
+		log.Printf("drain grace deadline expired")
+	case <-signals:
+		forced = true
+		log.Printf("second shutdown signal received")
+	}
+	cancelGrace()
+	if forced {
+		g.metrics.forcedShutdowns.Add(1)
+		g.forceCloseActive()
+		log.Printf("forcing tunnel shutdown")
+		// The grace deadline or a second signal means force now: Shutdown would
+		// otherwise keep waiting for a stalled HTTP handler after closing tunnels.
+		_ = server.Close()
+		_ = healthServer.Close()
+		return
+	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), finalShutdownTimeout)
+	defer cancelShutdown()
+	log.Printf("shutting down HTTP listeners")
+	closeOnTimeout := make(chan struct{})
+	go func() {
+		select {
+		case <-signals:
+			_ = server.Close()
+			_ = healthServer.Close()
+		case <-shutdownCtx.Done():
+			_ = server.Close()
+			_ = healthServer.Close()
+		case <-closeOnTimeout:
+		}
+	}()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		_ = server.Close()
+	}
+	if err := healthServer.Shutdown(shutdownCtx); err != nil {
+		_ = healthServer.Close()
+	}
+	close(closeOnTimeout)
+}
+
 func main() {
 	listen := flag.String("listen", env("LISTEN", "127.0.0.1:8080"), "HTTP listen address")
+	healthListen := flag.String("health-listen", env("HEALTH_LISTEN", "127.0.0.1:8082"), "private HTTP listener for liveness/readiness probes")
 	upstream := flag.String("upstream", env("UPSTREAM", "127.0.0.1:50051"), "default upstream TCP address")
 	targetsFile := flag.String("targets-file", os.Getenv("TARGETS_FILE"), "JSON allowed destinations, reloaded on each new target selection")
 	origin := flag.String("origin", env("ALLOWED_ORIGIN", "http://localhost:8080"), "exact allowed browser origin")
@@ -634,12 +962,17 @@ func main() {
 	maxPerPrincipal := flag.Int("max-connections-per-principal", envInt("MAX_CONNECTIONS_PER_PRINCIPAL", 8), "maximum concurrent tunnels for one principal")
 	maxGrant := flag.Duration("max-grant-lifetime", envDuration("MAX_ADMISSION_GRANT_LIFETIME", 15*time.Minute), "maximum accepted admission grant lifetime")
 	maxTunnel := flag.Duration("max-tunnel-lifetime", envDuration("MAX_TUNNEL_LIFETIME", time.Hour), "maximum lifetime of an established tunnel")
+	drainGrace := flag.Duration("drain-grace-period", envDuration("DRAIN_GRACE_PERIOD", 30*time.Second), "maximum time to drain existing tunnels after the first shutdown signal")
 	admissionURL := flag.String("admission-url", os.Getenv("ADMISSION_URL"), "fixed external admission service URL; mutually exclusive with TUNNEL_TOKEN")
 	healthcheck := flag.Bool("healthcheck", false, "check local HTTP readiness and exit")
 	flag.Parse()
 	if *healthcheck {
-		c := http.Client{Timeout: 2 * time.Second}
-		r, e := c.Get("http://127.0.0.1:8080/healthz")
+		url, err := healthcheckURL(*healthListen)
+		if err != nil {
+			os.Exit(1)
+		}
+		c := http.Client{Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		r, e := c.Get(url)
 		if e != nil {
 			os.Exit(1)
 		}
@@ -654,6 +987,9 @@ func main() {
 	}
 	if *maxPerPrincipal < 1 || *maxGrant <= 0 || *maxGrant > 24*time.Hour || *maxTunnel <= 0 || *maxTunnel > 24*time.Hour {
 		log.Fatal("principal quota and admission/tunnel lifetimes are outside supported bounds")
+	}
+	if *drainGrace < 0 || *drainGrace > maxDrainGrace {
+		log.Fatalf("drain-grace-period must be between 0 and %s", maxDrainGrace)
 	}
 	token := os.Getenv("TUNNEL_TOKEN")
 	for _, r := range token {
@@ -672,35 +1008,45 @@ func main() {
 	g := newGateway(config{upstream: *upstream, origin: *origin, token: token, maxConnections: *maxConns, upstreamTLS: *tlsUp, targetsFile: *targetsFile, admissionURL: *admissionURL, maxPerPrincipal: *maxPerPrincipal, maxGrantLifetime: *maxGrant, maxTunnelLifetime: *maxTunnel})
 	mux := http.NewServeMux()
 	mux.Handle("/tunnel", g)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		c, e := net.DialTimeout("tcp", *upstream, time.Second)
-		if e != nil {
-			http.Error(w, "upstream unavailable", 503)
-			return
-		}
-		c.Close()
-		w.Write([]byte("ok\n"))
-	})
+	healthRoutes(mux, g, *upstream)
 	mux.HandleFunc("/metrics", g.serveMetrics)
 	mux.Handle("/", http.FileServer(http.Dir(*assets)))
 	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-signals
-		g.stop()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		server.Shutdown(ctx)
-	}()
-	log.Printf("grpc-bridge listening on %s; default upstream %s; max tunnels %d", *listen, *upstream, *maxConns)
-	var err error
-	if *cert != "" {
-		err = server.ListenAndServeTLS(*cert, *key)
-	} else {
-		err = server.ListenAndServe()
+	publicListener, err := net.Listen("tcp", *listen)
+	if err != nil {
+		log.Fatalf("could not listen on %q: %v", *listen, err)
 	}
-	if !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+	g.setServing()
+	healthListener, err := net.Listen("tcp", *healthListen)
+	if err != nil {
+		log.Fatalf("could not listen on private health address %q: %v", *healthListen, err)
+	}
+	healthMux := http.NewServeMux()
+	healthRoutes(healthMux, g, *upstream)
+	healthServer := &http.Server{Handler: healthMux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
+	healthServeDone := make(chan error, 1)
+	go func() { healthServeDone <- healthServer.Serve(healthListener) }()
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	shutdownDone := make(chan struct{})
+	go func() {
+		shutdownOnSignal(g, server, healthServer, signals, *drainGrace)
+		close(shutdownDone)
+	}()
+	log.Printf("grpc-bridge listening on %s; health on %s; default upstream %s; max tunnels %d", *listen, *healthListen, *upstream, *maxConns)
+	var serveErr error
+	if *cert != "" {
+		serveErr = server.ServeTLS(publicListener, *cert, *key)
+	} else {
+		serveErr = server.Serve(publicListener)
+	}
+	if !errors.Is(serveErr, http.ErrServerClosed) {
+		log.Fatal(serveErr)
+	}
+	<-shutdownDone
+	_ = healthListener.Close()
+	if healthErr := <-healthServeDone; !errors.Is(healthErr, http.ErrServerClosed) {
+		log.Printf("health server stopped: %v", healthErr)
 	}
 }

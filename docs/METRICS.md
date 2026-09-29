@@ -9,6 +9,10 @@ when the bridge restarts. All series, including zero-valued failures, are emitte
 | `bridge_active_tunnels` | Gauge | Admission slots occupied, including backend setup. |
 | `bridge_established_tunnels` | Gauge | Open tunnels whose WebSocket upgrade response has been flushed. |
 | `bridge_tunnel_capacity` | Gauge | Configured maximum admission slots (`-max-connections`). |
+| `bridge_draining` | Gauge | 1 after the first shutdown signal; new tunnel admissions are rejected. |
+| `bridge_drain_graceful_completions_total` | Counter | Drains completed after tunnels and handshakes ended before the grace deadline. |
+| `bridge_drain_forced_closures_total` | Counter | Active tunnels closed at the grace deadline or after a second signal. |
+| `bridge_drain_forced_shutdowns_total` | Counter | Shutdowns forced by a second signal or an expired drain grace period. |
 | `bridge_connection_attempts_total` | Counter | Requests reaching `/tunnel`, including rejected handshakes. |
 | `bridge_connections_opened_total` | Counter | Successfully flushed WebSocket upgrades. |
 | `bridge_connections_closed_total` | Counter | Established tunnel handlers that have finished, for any reason, including shutdown. |
@@ -70,6 +74,9 @@ histogram_quantile(0.95,
 
 # Admission utilization per instance
 bridge_active_tunnels / bridge_tunnel_capacity
+
+# Forced shutdowns over the last 24 hours
+increase(bridge_drain_forced_shutdowns_total[24h])
 ```
 
 Scrape the bridge's HTTP endpoint from your monitoring system. The local demo is
