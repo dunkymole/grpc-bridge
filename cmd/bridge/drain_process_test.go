@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -427,6 +430,109 @@ func TestForcedCloseBypassesTLSCloseNotifyDeadlines(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("forced close waited for TLS close_notify peers to read")
 	}
+}
+
+type singleConnListener struct {
+	conn    net.Conn
+	mu      sync.Mutex
+	used    bool
+	closed  chan struct{}
+	closeMu sync.Once
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	if !l.used {
+		l.used = true
+		conn := l.conn
+		l.mu.Unlock()
+		return conn, nil
+	}
+	l.mu.Unlock()
+	<-l.closed
+	return nil, net.ErrClosed
+}
+func (l *singleConnListener) Close() error {
+	l.closeMu.Do(func() { close(l.closed) })
+	return nil
+}
+func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
+
+func TestHTTPServerDrainRawClosesIdleTLSConnection(t *testing.T) {
+	certificateServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	certificate := certificateServer.TLS.Certificates[0]
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+	serverName := leaf.DNSNames[0]
+	certificateServer.Close()
+
+	serverPipe, clientPipe := net.Pipe()
+	listener := &singleConnListener{conn: tls.Server(serverPipe, &tls.Config{Certificates: []tls.Certificate{certificate}}), closed: make(chan struct{})}
+	g := newGateway(config{maxConnections: 2})
+	g.setServing()
+	mux := http.NewServeMux()
+	healthRoutes(mux, g, "127.0.0.1:1")
+	server := &http.Server{Handler: mux, ConnState: g.httpConnState}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(listener) }()
+	client := tls.Client(clientPipe, &tls.Config{RootCAs: roots, ServerName: serverName})
+	if err := client.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	request := "GET /livez HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"
+	if _, err := io.WriteString(client, request); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(client), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, response.Body); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		g.mu.Lock()
+		idle := false
+		for _, state := range g.httpConns {
+			idle = idle || state == http.StateIdle
+		}
+		g.mu.Unlock()
+		if idle {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	g.mu.Lock()
+	idle := false
+	for _, state := range g.httpConns {
+		idle = idle || state == http.StateIdle
+	}
+	g.mu.Unlock()
+	if !idle {
+		t.Fatal("TLS HTTP connection never became idle")
+	}
+	signals := make(chan os.Signal, 1)
+	signals <- syscall.SIGTERM
+	started := time.Now()
+	shutdownOnSignal(g, server, &http.Server{}, signals, time.Second)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("idle TLS close blocked shutdown for %s", elapsed)
+	}
+	select {
+	case err := <-serveDone:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("Serve returned %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("HTTP Serve did not stop after drain")
+	}
+	_ = client.Close()
 }
 
 type delayedHijacker struct {

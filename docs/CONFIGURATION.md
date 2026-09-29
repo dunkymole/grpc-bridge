@@ -242,6 +242,9 @@ uses the outer tunnel credential but sends only its own non-authentication metad
   and drain metrics](METRICS.md). Metrics are always enabled on the public listener,
   without tunnel-token authentication. The private health listener defaults to port
   8082, separate from the reference admission service's default port 8081.
+  Compose sets a 45-second stop grace, longer than the default 30-second tunnel drain
+  plus the final HTTP shutdown bound. For Kubernetes, set `terminationGracePeriodSeconds`
+  to at least `DRAIN_GRACE_PERIOD` plus 5 seconds and a small scheduling margin.
 
 Go also supports its standard runtime environment variables; the project only
 sets `GOMEMLIMIT`. These do not replace container memory limits.

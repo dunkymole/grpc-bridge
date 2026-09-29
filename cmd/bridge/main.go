@@ -106,15 +106,17 @@ func (g *gateway) destination(r *http.Request) (string, bool, int) {
 
 type gateway struct {
 	config
-	slots      chan struct{}
-	mu         sync.Mutex
-	active     map[*activeTunnel]struct{}
-	handshakes map[*pendingHandshake]struct{}
-	principals map[string]int
-	metrics    metrics
-	draining   bool
-	serving    bool
-	changed    chan struct{}
+	slots       chan struct{}
+	mu          sync.Mutex
+	active      map[*activeTunnel]struct{}
+	handshakes  map[*pendingHandshake]struct{}
+	principals  map[string]int
+	httpConns   map[net.Conn]http.ConnState
+	httpClosing bool
+	metrics     metrics
+	draining    bool
+	serving     bool
+	changed     chan struct{}
 }
 
 type pendingHandshake struct {
@@ -176,7 +178,43 @@ func newGateway(c config) *gateway {
 	if c.admissionClient == nil {
 		c.admissionClient = newAdmissionHTTPClient()
 	}
-	return &gateway{config: c, slots: make(chan struct{}, c.maxConnections), active: make(map[*activeTunnel]struct{}), handshakes: make(map[*pendingHandshake]struct{}), principals: make(map[string]int), changed: make(chan struct{})}
+	return &gateway{config: c, slots: make(chan struct{}, c.maxConnections), active: make(map[*activeTunnel]struct{}), handshakes: make(map[*pendingHandshake]struct{}), principals: make(map[string]int), httpConns: make(map[net.Conn]http.ConnState), changed: make(chan struct{})}
+}
+
+func (g *gateway) httpConnState(conn net.Conn, state http.ConnState) {
+	g.mu.Lock()
+	closeNow := false
+	switch state {
+	case http.StateNew, http.StateActive, http.StateIdle:
+		if g.httpClosing {
+			closeNow = true
+		} else {
+			g.httpConns[conn] = state
+		}
+	case http.StateHijacked, http.StateClosed:
+		delete(g.httpConns, conn)
+	}
+	g.mu.Unlock()
+	if closeNow {
+		closeTransportConn(conn)
+	}
+}
+
+func (g *gateway) closeHTTPConnections(idleOnly bool) {
+	g.mu.Lock()
+	if !idleOnly {
+		g.httpClosing = true
+	}
+	connections := make([]net.Conn, 0, len(g.httpConns))
+	for conn, state := range g.httpConns {
+		if !idleOnly || state == http.StateIdle {
+			connections = append(connections, conn)
+		}
+	}
+	g.mu.Unlock()
+	for _, conn := range connections {
+		closeTransportConn(conn)
+	}
 }
 
 func (g *gateway) signalStateLocked() {
@@ -917,6 +955,7 @@ func shutdownOnSignal(g *gateway, server, healthServer *http.Server, signals <-c
 	if forced {
 		g.metrics.forcedShutdowns.Add(1)
 		g.forceCloseActive()
+		g.closeHTTPConnections(false)
 		log.Printf("forcing tunnel shutdown")
 		// The grace deadline or a second signal means force now: Shutdown would
 		// otherwise keep waiting for a stalled HTTP handler after closing tunnels.
@@ -927,22 +966,29 @@ func shutdownOnSignal(g *gateway, server, healthServer *http.Server, signals <-c
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), finalShutdownTimeout)
 	defer cancelShutdown()
 	log.Printf("shutting down HTTP listeners")
+	g.closeHTTPConnections(true)
 	closeOnTimeout := make(chan struct{})
 	go func() {
 		select {
 		case <-signals:
+			g.closeHTTPConnections(false)
 			_ = server.Close()
+			g.closeHTTPConnections(false)
 			_ = healthServer.Close()
 		case <-shutdownCtx.Done():
+			g.closeHTTPConnections(false)
 			_ = server.Close()
+			g.closeHTTPConnections(false)
 			_ = healthServer.Close()
 		case <-closeOnTimeout:
 		}
 	}()
 	if err := server.Shutdown(shutdownCtx); err != nil {
+		g.closeHTTPConnections(false)
 		_ = server.Close()
 	}
 	if err := healthServer.Shutdown(shutdownCtx); err != nil {
+		g.closeHTTPConnections(false)
 		_ = healthServer.Close()
 	}
 	close(closeOnTimeout)
@@ -1011,7 +1057,7 @@ func main() {
 	healthRoutes(mux, g, *upstream)
 	mux.HandleFunc("/metrics", g.serveMetrics)
 	mux.Handle("/", http.FileServer(http.Dir(*assets)))
-	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
+	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, ConnState: g.httpConnState}
 	publicListener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		log.Fatalf("could not listen on %q: %v", *listen, err)
@@ -1023,7 +1069,7 @@ func main() {
 	}
 	healthMux := http.NewServeMux()
 	healthRoutes(healthMux, g, *upstream)
-	healthServer := &http.Server{Handler: healthMux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
+	healthServer := &http.Server{Handler: healthMux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, ConnState: g.httpConnState}
 	healthServeDone := make(chan error, 1)
 	go func() { healthServeDone <- healthServer.Serve(healthListener) }()
 	signals := make(chan os.Signal, 2)
