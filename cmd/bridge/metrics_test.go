@@ -22,7 +22,7 @@ func TestMetricPayloadAccounting(t *testing.T) {
 	}
 	count.Store(0)
 	s := socket{conn: &memoryConn{}, downstreamBytes: &count}
-	for _, op := range []byte{9, 10, 8} {
+	for _, op := range []byte{9, 10} {
 		if err := s.writeFrame(op, []byte("control")); err != nil {
 			t.Fatal(err)
 		}

@@ -421,12 +421,22 @@ type socket struct {
 	conn            net.Conn
 	reader          *bufio.Reader
 	writeMu         sync.Mutex
+	closeSent       bool
 	downstreamBytes *atomic.Uint64
 }
 
 func (s *socket) writeFrame(op byte, p []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// A close frame ends the WebSocket write side. In particular, the
+	// upstream reader may observe EOF after relay has echoed a peer close; it
+	// must not append a spurious 1011 (or data/pong) after the close handshake.
+	if s.closeSent {
+		return net.ErrClosed
+	}
+	if op == 8 {
+		s.closeSent = true
+	}
 	s.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	var header [10]byte
 	header[0] = 0x80 | op

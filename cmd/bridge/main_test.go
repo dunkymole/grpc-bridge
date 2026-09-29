@@ -64,6 +64,78 @@ func TestRelayFragmentationAndControl(t *testing.T) {
 		t.Fatalf("bad control response: %x", downstream.Bytes())
 	}
 }
+
+func TestCloseFrameIsTerminal(t *testing.T) {
+	downstream := &memoryConn{}
+	s := socket{conn: downstream}
+	if err := s.closeWith(1000); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the upstream pump observing EOF after the peer close has been
+	// echoed. It must not send a second close or data after the handshake.
+	if err := s.closeWith(1011); err == nil {
+		t.Fatal("second close frame was written")
+	}
+	if err := s.writeFrame(2, []byte("late data")); err == nil {
+		t.Fatal("data frame was written after close")
+	}
+	if want := []byte{0x88, 2, 0x03, 0xe8}; !bytes.Equal(downstream.Bytes(), want) {
+		t.Fatalf("close output = %x, want exactly %x", downstream.Bytes(), want)
+	}
+}
+
+func TestInvalidFrameGetsOneProtocolClose(t *testing.T) {
+	downstream := &memoryConn{}
+	s := socket{
+		conn:   downstream,
+		reader: bufio.NewReader(bytes.NewReader(clientFrame(8, true, []byte{1}))),
+	}
+	if err := s.relay(&memoryConn{}); err == nil || err == io.EOF {
+		t.Fatalf("invalid close payload was accepted: %v", err)
+	}
+	if err := s.closeWith(1002); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.closeWith(1011); err == nil {
+		t.Fatal("failure pump appended a second close after protocol error")
+	}
+	if want := []byte{0x88, 2, 0x03, 0xea}; !bytes.Equal(downstream.Bytes(), want) {
+		t.Fatalf("protocol close output = %x, want exactly %x", downstream.Bytes(), want)
+	}
+}
+
+func TestConcurrentPumpsSendOnlyOneClose(t *testing.T) {
+	downstream := &memoryConn{}
+	s := socket{conn: downstream}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, code := range []uint16{1000, 1011} {
+		go func(code uint16) {
+			<-start
+			results <- s.closeWith(code)
+		}(code)
+	}
+	close(start)
+	first, second := <-results, <-results
+	if (first == nil) == (second == nil) {
+		t.Fatalf("want exactly one winning close write, got %v and %v", first, second)
+	}
+	if len(downstream.Bytes()) != 4 {
+		t.Fatalf("concurrent pumps wrote %d bytes, want one close frame", downstream.Len())
+	}
+}
+
+func TestUpstreamFailureCanInitiateClose(t *testing.T) {
+	downstream := &memoryConn{}
+	s := socket{conn: downstream}
+	if err := s.closeWith(1011); err != nil {
+		t.Fatal(err)
+	}
+	if want := []byte{0x88, 2, 0x03, 0xf3}; !bytes.Equal(downstream.Bytes(), want) {
+		t.Fatalf("upstream failure close = %x, want %x", downstream.Bytes(), want)
+	}
+}
+
 func TestLargeFrameStreamsInChunks(t *testing.T) {
 	payload := bytes.Repeat([]byte{0, 1, 255, 127}, maxFrame/4)
 	input := clientFrame(2, true, payload)
@@ -86,6 +158,10 @@ func TestRejectMalformedFrames(t *testing.T) {
 		"noncanonical":       {0x82, 0xfe, 0, 1},
 		"oversized":          {0x82, 0xff, 0, 0, 0, 0, 0, 0x20, 0, 0},
 	}
+	reservedBinary := clientFrame(2, true, []byte("binary"))
+	reservedBinary[0] |= 0x40
+	cases["reserved bit on binary message"] = reservedBinary
+	cases["unsupported binary-profile opcode"] = clientFrame(3, true, []byte("binary"))
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {
 			s := socket{conn: &memoryConn{}, reader: bufio.NewReader(bytes.NewReader(input))}

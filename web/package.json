@@ -59,6 +59,7 @@
     "test": "tsx --test test/*.test.ts",
     "test:e2e": "tsx --test test/*.e2e.ts",
     "contracts:verify": "node scripts/verify-contract-fixture.mjs",
+    "test:browser": "playwright test -c playwright.config.ts",
     "example": "tsx examples/run.ts",
     "size": "npm run build:package && node scripts/measure-package.mjs",
     "prepack": "npm run build:package"
@@ -70,6 +71,7 @@
   "devDependencies": {
     "@bufbuild/protoc-gen-es": "2.15.0",
     "@grpc/grpc-js": "1.14.5",
+    "@playwright/test": "1.63.0",
     "@types/node": "24.10.1",
     "esbuild": "0.28.2",
     "prettier": "3.6.2",

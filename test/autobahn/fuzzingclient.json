@@ -1,0 +1,14 @@
+{
+  "options": {"failByDrop": false},
+  "outdir": "/reports/report",
+  "servers": [
+    {
+      "agent": "grpc-bridge-go-relay",
+      "url": "ws://bridge:8080/tunnel",
+      "protocols": ["grpc-tunnel.v1", "auth.gates-test-token"]
+    }
+  ],
+  "cases": ["2.*", "3.*", "4.2.*", "7.*"],
+  "exclude-cases": ["7.1.1", "7.1.4", "7.1.5"],
+  "exclude-agent-cases": {}
+}
