@@ -15,6 +15,9 @@ var dialBounds = [...]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5
 
 type metrics struct {
 	attempts, opened, closed, toBackend, toClient atomic.Uint64
+	drainCompletions, forcedClosures              atomic.Uint64
+	forcedShutdowns                               atomic.Uint64
+	draining                                      atomic.Int64
 	established                                   atomic.Int64
 	failures                                      [len(failureReasons)]atomic.Uint64
 	dial                                          histogram
@@ -82,6 +85,19 @@ func (g *gateway) serveMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "bridge_established_tunnels %d\n", m.established.Load())
 	header("bridge_tunnel_capacity", "Configured maximum occupied admission slots.", "gauge")
 	fmt.Fprintf(w, "bridge_tunnel_capacity %d\n", cap(g.slots))
+	header("bridge_draining", "Whether the process has entered tunnel drain and will reject new tunnels.", "gauge")
+	fmt.Fprintf(w, "bridge_draining %d\n", m.draining.Load())
+	for _, item := range []struct {
+		name, help string
+		value      uint64
+	}{
+		{"bridge_drain_graceful_completions_total", "Shutdown drains that completed after active tunnels and handshakes ended before the grace deadline.", m.drainCompletions.Load()},
+		{"bridge_drain_forced_closures_total", "Active tunnels closed because the drain grace period expired or a second shutdown signal arrived.", m.forcedClosures.Load()},
+		{"bridge_drain_forced_shutdowns_total", "Shutdowns forced by a second signal or an expired drain grace period.", m.forcedShutdowns.Load()},
+	} {
+		header(item.name, item.help, "counter")
+		fmt.Fprintf(w, "%s %d\n", item.name, item.value)
+	}
 	for _, item := range []struct {
 		name, help string
 		value      uint64
