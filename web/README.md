@@ -46,7 +46,7 @@ protoc -I ../proto \
 
 ```ts
 import { openBridgeConnection } from "@dunkymole/grpc-bridge";
-import { OrdersContract } from "./gen/orders_contract.js";
+import { contract as OrdersContract } from "./gen/orders_contract.js";
 
 const connection = await openBridgeConnection({
   url: "wss://bridge.example.com/tunnel",
@@ -71,6 +71,9 @@ initialization. Deliberate `any` or type assertions can bypass TypeScript, so
 the runtime still verifies the artifact and each actual method before sending.
 This is a safety boundary against accidental API misuse, not a sandbox against
 code that deliberately imports `/raw` or tampers with JavaScript internals.
+The client stamp alone does not enforce compatibility: every native gRPC service
+must install the matching Proto Contract strict server runtime before claiming
+server-side enforcement.
 
 The strict connection and shared lease expose `client(contract)`, lifecycle
 state, subscriptions, and close/release operations. They do not expose a raw
@@ -85,7 +88,7 @@ one generated client go in `client(contract, { interceptors })`:
 ```ts
 import type { Interceptor } from "@connectrpc/connect";
 import { openBridgeConnection } from "@dunkymole/grpc-bridge";
-import { OrdersContract } from "./gen/orders_contract.js";
+import { contract as OrdersContract } from "./gen/orders_contract.js";
 
 const trace: Interceptor = (next) => async (request) => {
   request.header.set("x-request-id", crypto.randomUUID());
@@ -119,7 +122,7 @@ negotiate versions over the network, and the bridge relay does not inspect it.
 
 ```ts
 import { createSharedBridgeConnection } from "@dunkymole/grpc-bridge";
-import { OrdersContract } from "./gen/orders_contract.js";
+import { contract as OrdersContract } from "./gen/orders_contract.js";
 
 const shared = createSharedBridgeConnection({
   url: "wss://bridge.example.com/tunnel",
