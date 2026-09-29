@@ -3,8 +3,8 @@
 The bridge currently reads environment variables and command-line flags, plus a
 JSON destination policy. It does not read YAML or a unified JSON settings file.
 Docker reads `compose.yaml` and passes the configured environment to the bridge.
-JWT validation and key discovery are not implemented; tunnel authentication still
-uses an optional static shared token.
+Tunnel authentication can use either a static shared token or a separately
+operated admission service; the two modes are mutually exclusive.
 
 ## Bridge process settings
 
@@ -20,6 +20,10 @@ read at process startup; changing them requires restarting/recreating the bridge
 | `ALLOWED_ORIGIN`     | `-origin`          | `http://localhost:8080` | Exact permitted browser Origin, including scheme and port. Native clients may omit Origin.                                                                |
 | `TUNNEL_TOKEN`       | none               | empty                   | Optional shared token. Only letters, digits, `_`, and `-` are accepted. Never log or commit it.                                                           |
 | none                 | `-max-connections` | `256`                   | Maximum concurrent tunnels, including connection establishment; must be positive.                                                                         |
+| `ADMISSION_URL`       | `-admission-url`   | empty                   | Fixed admission endpoint. Must be HTTPS, or HTTP on loopback for local development. Mutually exclusive with `TUNNEL_TOKEN`.                               |
+| `MAX_CONNECTIONS_PER_PRINCIPAL` | `-max-connections-per-principal` | `8` | Concurrent tunnel limit per admission subject (or per static/anonymous identity). Process-local, in-flight attempts included. Must be positive. |
+| `MAX_ADMISSION_GRANT_LIFETIME` | `-max-grant-lifetime` | `15m` | Maximum lifetime accepted from an admission response; Go duration, positive and at most 24h. |
+| `MAX_TUNNEL_LIFETIME` | `-max-tunnel-lifetime` | `1h` | Maximum time any tunnel may remain open, even if its admission grant lasts longer; Go duration, positive and at most 24h. |
 | `TLS_CERT`           | `-tls-cert`        | empty                   | PEM certificate file enabling HTTPS/WSS.                                                                                                                  |
 | `TLS_KEY`            | `-tls-key`         | empty                   | Corresponding PEM private key file. Required when a certificate is supplied.                                                                              |
 | `UPSTREAM_TLS`       | `-upstream-tls`    | `false`                 | Environment enables TLS only for literal `true`; verifies default backend certificate and requires `h2` ALPN.                                             |
@@ -32,6 +36,56 @@ The stock Compose file passes only the environment variables shown in its
 environment entry or command flags to Compose. Merely adding an arbitrary name to
 `.env` does not pass it into the container. `TUNNEL_TOKEN` is explicitly interpolated
 from the shell or `.env`; the shell takes precedence.
+
+### External admission and the reference verifier
+
+When `ADMISSION_URL` is set, the bridge still resolves the requested destination
+through its static destination policy first. It then posts a bounded JSON request
+containing the opaque browser credential and the already-approved `target` to
+that fixed URL. HTTPS is required except for loopback development. Redirects are
+not followed, requests have a two-second timeout, credentials are limited to 4 KiB,
+and responses are limited to 16 KiB. The request and successful response are:
+
+```json
+{"version":1,"credential":"<opaque bearer credential>","target":"service.internal:443"}
+```
+
+```json
+{"version":1,"subject":"user-123","target":"service.internal:443","expires_at":1790000000}
+```
+
+The bridge requires exactly one JSON object with `version: 1`, a bounded `subject`,
+the exact same `target`, and a future Unix-second `expires_at` within
+`MAX_ADMISSION_GRANT_LIFETIME`. Malformed, stale, mismatched, or unavailable
+verifier responses fail closed. The bridge never takes a destination or TLS policy
+from the grant.
+
+The browser sends its credential as the `auth.<credential>` WebSocket subprotocol
+beside `grpc-tunnel.v1`. A successful bridge handshake selects only
+`grpc-tunnel.v1`, so the credential is not echoed. Do not enable HTTP between
+different hosts: the credential is a bearer secret. The bridge does not parse
+the credential or impose application claim semantics.
+
+`examples/admission` is a separately deployed reference verifier. It accepts an
+RS256 JWT with required `iss`, `aud`, `sub`, `nbf`, and `exp` claims and a bounded
+`targets` string array. The requested destination must match a target exactly.
+The verifier loads keys only from its configured JWKS URL; token-provided `jku`
+and `x5u` URLs and unsupported `crit` headers are rejected. JWKS keys with a
+declared `use` must say `sig`; declared `key_ops` must include `verify`. Its JWKS
+client uses a two-second timeout, a 1 MiB response limit, no redirects, five-minute
+refresh, and a rate-limited unknown-key refresh. Previously cached keys remain
+usable during a JWKS outage; keys not already in that cache fail closed until
+refresh succeeds. Operators should keep old and new signing keys published through
+the rotation window and monitor verifier availability. This is an example service; deploy it behind an appropriately
+restricted private network or authenticated proxy and supply issuer, audience,
+and JWKS URL from trusted operator configuration.
+
+The global cap bounds admission requests. After a successful grant identifies a
+subject, the per-principal in-memory counter covers dialing and active tunnels and
+is released on every handler exit. It is local to one bridge process, is not shared
+across replicas, and does not provide a fleet-wide quota. Existing grants are not
+revoked immediately when a JWT is revoked or removed from the issuer; an open
+tunnel closes at the earlier of grant expiry and `MAX_TUNNEL_LIFETIME`.
 
 ## Destination policy (live)
 
