@@ -61,6 +61,8 @@ export interface DataFrame {
   type: typeof FrameType.DATA;
   streamId: number;
   data: Uint8Array;
+  /** Full DATA payload length, including Pad Length and padding bytes. */
+  flowControlledLength?: number;
   endStream: boolean;
 }
 

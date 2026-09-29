@@ -45,6 +45,8 @@ export class H2Stream {
   readonly stopped = new AbortController();
   readonly id: number;
   readonly sendWindow: SendWindow;
+  /** Remaining inbound flow-control credit for this stream. */
+  recvWindow: number;
   state: StreamState;
 
   /** Our send side has ended (we sent END_STREAM: bodyless HEADERS or the
@@ -95,10 +97,12 @@ export class H2Stream {
     state: StreamState = "idle",
     onConsume: (n: number) => void = () => {},
     onCancel: () => void = () => {},
+    initialReceiveWindow = 1024 * 1024,
   ) {
     this.id = id;
     this.state = state;
     this.sendWindow = new SendWindow(initialSendWindow);
+    this.recvWindow = initialReceiveWindow;
     this.onConsume = onConsume;
     this.onCancel = onCancel;
     this.body = new ReadableStream<Uint8Array>(
@@ -144,6 +148,14 @@ export class H2Stream {
     }
     if (endStream) this.recvEnded = true;
     this.wakeRecv();
+  }
+
+  /** Drop unread data after reset and return its byte count to the connection owner. */
+  discardBuffered(): number {
+    const discarded = this.recvBuffered;
+    this.recvBuffered = 0;
+    this.recvQueue.length = 0;
+    return discarded;
   }
 
   receiveReset(errorCode: number): void {
