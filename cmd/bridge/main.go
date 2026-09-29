@@ -559,7 +559,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upstream = &countedConn{Conn: upstream, bytes: &g.metrics.toBackend}
 	tunnel = &activeTunnel{upstream: upstream}
 	if !g.registerTunnel(tunnel) {
-		failure = "shutdown"
+		reject("bridge is draining", http.StatusServiceUnavailable, "shutdown")
 		return
 	}
 	activeRegistered = true

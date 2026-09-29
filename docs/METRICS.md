@@ -75,12 +75,12 @@ histogram_quantile(0.95,
 # Admission utilization per instance
 bridge_active_tunnels / bridge_tunnel_capacity
 
-# Forced shutdowns over the last 24 hours
-increase(bridge_drain_forced_shutdowns_total[24h])
 ```
 
 Scrape the bridge's HTTP endpoint from your monitoring system. The local demo is
 available at `http://localhost:8080/metrics`. The endpoint shares the listener and
 TLS configuration with the tunnel and is not protected by `TUNNEL_TOKEN`; restrict
 access at your deployment's network/proxy boundary if exposing the bridge publicly.
-There are no new metrics flags or environment variables.
+Drain counters are process-local and reset on restart. They increment immediately
+before shutdown closes the HTTP listeners, so a final scrape is best-effort; the
+bridge's shutdown log lines are the authoritative record for a terminating process.

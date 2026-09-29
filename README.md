@@ -242,7 +242,8 @@ On the first SIGTERM/SIGINT the bridge rejects new tunnels, keeps liveness and
 readiness observable, and lets existing tunnels finish for `DRAIN_GRACE_PERIOD`
 (default 30 seconds, maximum 10 minutes). At the deadline it closes both tunnel
 legs. A second signal forces immediate closure. Drain state and graceful/forced
-shutdown counts are exported in `/metrics`.
+shutdown counters are available in `/metrics` during shutdown; shutdown logs remain
+authoritative because listeners close immediately afterward.
 The bundled Compose service allows 45 seconds for termination, covering the default
 30-second drain and final HTTP shutdown. Set Kubernetes `terminationGracePeriodSeconds`
 to more than `DRAIN_GRACE_PERIOD` plus five seconds so the orchestrator does not kill
