@@ -3,6 +3,7 @@ import {
   type Interceptor,
   type Transport,
 } from "@connectrpc/connect";
+import type { DescMethod, DescService } from "@bufbuild/protobuf";
 import { runStreamingCall, runUnaryCall } from "@connectrpc/connect/protocol";
 
 export interface InterceptorOptions {
@@ -10,6 +11,12 @@ export interface InterceptorOptions {
   interceptors?: readonly Interceptor[];
   /** Logical backend URL for interceptor requests; does not change routing. */
   baseUrl: string;
+  /** Internal final check after ordinary hooks and before the inner transport. */
+  finalizeRequest?: (request: {
+    service: DescService;
+    method: DescMethod;
+    header: Headers;
+  }) => Headers;
 }
 
 /**
@@ -22,9 +29,10 @@ export function interceptTransport(
   transport: Transport,
   options: InterceptorOptions,
 ): Transport {
-  if (!options.interceptors?.length) return transport;
-  const interceptors = [...options.interceptors];
+  if (!options.interceptors?.length && !options.finalizeRequest) return transport;
+  const interceptors = [...(options.interceptors ?? [])];
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
+  const finalizeRequest = options.finalizeRequest;
   return {
     unary(method, signal, timeoutMs, header, message, contextValues) {
       const deadline =
@@ -50,7 +58,7 @@ export function interceptTransport(
             deadline === undefined
               ? timeoutMs
               : Math.max(1, deadline - Date.now()),
-            req.header,
+            finalizeRequest?.(req) ?? req.header,
             req.message,
             req.contextValues,
           ),
@@ -80,7 +88,7 @@ export function interceptTransport(
             deadline === undefined
               ? timeoutMs
               : Math.max(1, deadline - Date.now()),
-            req.header,
+            finalizeRequest?.(req) ?? req.header,
             req.message,
             req.contextValues,
           ),

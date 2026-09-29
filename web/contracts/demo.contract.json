@@ -1,0 +1,69 @@
+{
+  "format": 2,
+  "api": "bridge.demo",
+  "version": "1.0.0",
+  "digest": "sha256:0b491b435398bbd2f60338717c064a01477d0a93913e17dcfc3894c71cb355f9",
+  "service": {
+    "name": "bridge.demo.v1.DemoService",
+    "methods": [
+      {
+        "name": "Chat",
+        "input": "bridge.demo.v1.Message",
+        "output": "bridge.demo.v1.Message",
+        "client_streaming": true,
+        "server_streaming": true
+      },
+      {
+        "name": "Collect",
+        "input": "bridge.demo.v1.Message",
+        "output": "bridge.demo.v1.Message",
+        "client_streaming": true,
+        "server_streaming": false
+      },
+      {
+        "name": "Count",
+        "input": "bridge.demo.v1.Message",
+        "output": "bridge.demo.v1.Message",
+        "client_streaming": false,
+        "server_streaming": true
+      },
+      {
+        "name": "Echo",
+        "input": "bridge.demo.v1.Message",
+        "output": "bridge.demo.v1.Message",
+        "client_streaming": false,
+        "server_streaming": false
+      }
+    ]
+  },
+  "messages": [
+    {
+      "name": "bridge.demo.v1.Message",
+      "syntax": "proto3",
+      "fields": [
+        {
+          "number": 1,
+          "name": "text",
+          "type": "TYPE_STRING",
+          "json_name": "text",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "number": 2,
+          "name": "number",
+          "type": "TYPE_INT32",
+          "json_name": "number",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "number": 3,
+          "name": "delay_ms",
+          "type": "TYPE_INT32",
+          "json_name": "delayMs",
+          "label": "LABEL_OPTIONAL"
+        }
+      ]
+    }
+  ],
+  "enums": []
+}

@@ -7,7 +7,7 @@ import {
   openBridgeConnection,
   interceptTransport,
   type BridgeConnectionEvent,
-} from "../src/index.js";
+} from "../src/raw.js";
 import { DemoService } from "../src/gen/demo_pb.js";
 import { runChecks } from "../src/verify.js";
 

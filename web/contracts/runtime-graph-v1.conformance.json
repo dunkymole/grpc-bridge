@@ -1,0 +1,205 @@
+{
+  "format": "protobuf-es.runtime-graph.v1",
+  "service": {
+    "typeName": "contract.fixture.v1.GraphService",
+    "methods": [
+      {
+        "name": "Exchange",
+        "localName": "exchange",
+        "kind": "bidi_streaming",
+        "input": "contract.fixture.v1.Request",
+        "output": "contract.fixture.v1.Response",
+        "idempotency": 1
+      }
+    ]
+  },
+  "messages": [
+    {
+      "typeName": "contract.fixture.v1.Child",
+      "fields": [
+        {
+          "number": 1,
+          "name": "enabled",
+          "localName": "enabled",
+          "jsonName": "enabled",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": null,
+          "default": { "type": "bool", "value": true },
+          "shape": { "kind": "scalar", "scalar": "BOOL", "longAsString": false }
+        }
+      ],
+      "oneofs": []
+    },
+    {
+      "typeName": "contract.fixture.v1.Request",
+      "fields": [
+        {
+          "number": 1,
+          "name": "request_id",
+          "localName": "requestId",
+          "jsonName": "requestId",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": null,
+          "default": { "type": "string", "value": "client" },
+          "shape": { "kind": "scalar", "scalar": "STRING", "longAsString": false }
+        },
+        {
+          "number": 2,
+          "name": "mode_forward",
+          "localName": "modeForward",
+          "jsonName": "modeForward",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": null,
+          "default": { "type": "enum", "value": 0 },
+          "shape": { "kind": "enum", "typeName": "contract.fixture.v1.ForwardAliases.Value" }
+        },
+        {
+          "number": 3,
+          "name": "mode_swapped",
+          "localName": "modeSwapped",
+          "jsonName": "modeSwapped",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": null,
+          "default": { "type": "enum", "value": 0 },
+          "shape": { "kind": "enum", "typeName": "contract.fixture.v1.SwappedAliases.Value" }
+        },
+        {
+          "number": 4,
+          "name": "modes",
+          "localName": "modes",
+          "jsonName": "modes",
+          "utf8Validation": false,
+          "presence": "IMPLICIT",
+          "oneof": null,
+          "default": null,
+          "shape": {
+            "kind": "list",
+            "element": { "kind": "enum", "typeName": "contract.fixture.v1.ForwardAliases.Value" },
+            "packed": true
+          }
+        },
+        {
+          "number": 5,
+          "name": "by_name",
+          "localName": "byName",
+          "jsonName": "byName",
+          "utf8Validation": false,
+          "presence": "IMPLICIT",
+          "oneof": null,
+          "default": null,
+          "shape": {
+            "kind": "map",
+            "keyScalar": "STRING",
+            "value": { "kind": "enum", "typeName": "contract.fixture.v1.ForwardAliases.Value" },
+            "delimitedEncoding": false
+          }
+        },
+        {
+          "number": 6,
+          "name": "child",
+          "localName": "child",
+          "jsonName": "child",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": null,
+          "default": null,
+          "shape": { "kind": "message", "typeName": "contract.fixture.v1.Child", "delimitedEncoding": false }
+        },
+        {
+          "number": 7,
+          "name": "sequence",
+          "localName": "sequence",
+          "jsonName": "sequence",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": null,
+          "default": { "type": "integer", "value": "9223372036854775807" },
+          "shape": { "kind": "scalar", "scalar": "INT64", "longAsString": true }
+        },
+        {
+          "number": 8,
+          "name": "choice_text",
+          "localName": "choiceText",
+          "jsonName": "choiceText",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": "choice",
+          "default": null,
+          "shape": { "kind": "scalar", "scalar": "STRING", "longAsString": false }
+        },
+        {
+          "number": 9,
+          "name": "choice_child",
+          "localName": "choiceChild",
+          "jsonName": "choiceChild",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": "choice",
+          "default": null,
+          "shape": { "kind": "message", "typeName": "contract.fixture.v1.Child", "delimitedEncoding": false }
+        },
+        {
+          "number": 10,
+          "name": "sequences",
+          "localName": "sequences",
+          "jsonName": "sequences",
+          "utf8Validation": false,
+          "presence": "IMPLICIT",
+          "oneof": null,
+          "default": null,
+          "shape": {
+            "kind": "list",
+            "element": { "kind": "scalar", "scalar": "INT64", "longAsString": true },
+            "packed": true
+          }
+        }
+      ],
+      "oneofs": [
+        { "name": "choice", "localName": "choice", "fields": [8, 9] }
+      ]
+    },
+    {
+      "typeName": "contract.fixture.v1.Response",
+      "fields": [
+        {
+          "number": 1,
+          "name": "accepted",
+          "localName": "accepted",
+          "jsonName": "accepted",
+          "utf8Validation": false,
+          "presence": "EXPLICIT",
+          "oneof": null,
+          "default": null,
+          "shape": { "kind": "scalar", "scalar": "BOOL", "longAsString": false }
+        }
+      ],
+      "oneofs": []
+    }
+  ],
+  "enums": [
+    {
+      "typeName": "contract.fixture.v1.ForwardAliases.Value",
+      "open": false,
+      "defaultName": "ZERO",
+      "defaultNumber": 0,
+      "values": [
+        { "number": 0, "aliases": [{ "name": "ZERO", "localName": "ZERO" }] },
+        { "number": 1, "aliases": [{ "name": "FIRST", "localName": "FIRST" }, { "name": "SECOND", "localName": "SECOND" }] }
+      ]
+    },
+    {
+      "typeName": "contract.fixture.v1.SwappedAliases.Value",
+      "open": false,
+      "defaultName": "ZERO",
+      "defaultNumber": 0,
+      "values": [
+        { "number": 0, "aliases": [{ "name": "ZERO", "localName": "ZERO" }] },
+        { "number": 1, "aliases": [{ "name": "SECOND", "localName": "SECOND" }, { "name": "FIRST", "localName": "FIRST" }] }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "name": "@dunkymole/grpc-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Typed gRPC over HTTP/2 through gRPC Bridge WebSocket tunnels",
   "type": "module",
   "main": "./package-dist/index.js",
@@ -9,10 +9,19 @@
     ".": {
       "types": "./package-dist/index.d.ts",
       "import": "./package-dist/index.js"
+    },
+    "./raw": {
+      "types": "./package-dist/raw.d.ts",
+      "import": "./package-dist/raw.js"
+    },
+    "./codegen": {
+      "types": "./package-dist/codegen.d.ts",
+      "import": "./package-dist/codegen.js"
     }
   },
   "files": [
     "package-dist",
+    "contracts",
     "README.md",
     "RETRIES.md",
     "LICENSE",
@@ -49,6 +58,7 @@
     "build:demo": "tsc --noEmit && node build.mjs",
     "test": "tsx --test test/*.test.ts",
     "test:e2e": "tsx --test test/*.e2e.ts",
+    "contracts:verify": "node scripts/verify-contract-fixture.mjs",
     "example": "tsx examples/run.ts",
     "size": "npm run build:package && node scripts/measure-package.mjs",
     "prepack": "npm run build:package"

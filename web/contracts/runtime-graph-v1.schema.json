@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dunkymole/grpc-bridge/contracts/runtime-graph-v1.schema.json",
+  "title": "Protobuf-ES runtime graph v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "service", "messages", "enums"],
+  "properties": {
+    "format": { "const": "protobuf-es.runtime-graph.v1" },
+    "service": {
+      "type": "object", "additionalProperties": false,
+      "required": ["typeName", "methods"],
+      "properties": {
+        "typeName": { "$ref": "#/$defs/typeName" },
+        "methods": { "type": "array", "items": { "$ref": "#/$defs/method" } }
+      }
+    },
+    "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } },
+    "enums": { "type": "array", "items": { "$ref": "#/$defs/enum" } }
+  },
+  "$defs": {
+    "typeName": { "type": "string", "minLength": 1 },
+    "method": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "localName", "kind", "input", "output", "idempotency"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "localName": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["unary", "server_streaming", "client_streaming", "bidi_streaming"] },
+        "input": { "$ref": "#/$defs/typeName" },
+        "output": { "$ref": "#/$defs/typeName" },
+        "idempotency": { "type": "integer", "minimum": 0, "maximum": 2 }
+      }
+    },
+    "message": {
+      "type": "object", "additionalProperties": false,
+      "required": ["typeName", "fields", "oneofs"],
+      "properties": {
+        "typeName": { "$ref": "#/$defs/typeName" },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } },
+        "oneofs": { "type": "array", "items": { "$ref": "#/$defs/oneof" } }
+      }
+    },
+    "oneof": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "localName", "fields"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "localName": { "type": "string", "minLength": 1 },
+        "fields": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 536870911 } }
+      }
+    },
+    "field": {
+      "type": "object", "additionalProperties": false,
+      "required": ["number", "name", "localName", "jsonName", "utf8Validation", "presence", "oneof", "default", "shape"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1, "maximum": 536870911 },
+        "name": { "type": "string", "minLength": 1 },
+        "localName": { "type": "string", "minLength": 1 },
+        "jsonName": { "type": "string", "minLength": 1 },
+        "utf8Validation": { "type": "boolean" },
+        "presence": { "enum": ["FIELD_PRESENCE_UNKNOWN", "EXPLICIT", "IMPLICIT", "LEGACY_REQUIRED"] },
+        "oneof": { "type": ["string", "null"] },
+        "default": { "oneOf": [
+          { "type": "null" },
+          { "$ref": "#/$defs/defaultBool" },
+          { "$ref": "#/$defs/defaultString" },
+          { "$ref": "#/$defs/defaultBytes" },
+          { "$ref": "#/$defs/defaultInteger" },
+          { "$ref": "#/$defs/defaultNumber" },
+          { "$ref": "#/$defs/defaultEnum" }
+        ] },
+        "shape": { "$ref": "#/$defs/shape" }
+      }
+    },
+    "defaultBool": { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "bool" }, "value": { "type": "boolean" } } },
+    "defaultString": { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "string" }, "value": { "type": "string" } } },
+    "defaultBytes": { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "bytes" }, "value": { "type": "string", "contentEncoding": "base64" } } },
+    "defaultInteger": { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "integer" }, "value": { "type": "string", "pattern": "^-?(0|[1-9][0-9]*)$" } } },
+    "defaultNumber": { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "number" }, "value": { "oneOf": [{ "type": "number" }, { "enum": ["NaN", "Infinity", "-Infinity", "-0"] }] } } },
+    "defaultEnum": { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "enum" }, "value": { "type": "integer" } } },
+    "shape": {
+      "oneOf": [
+        { "$ref": "#/$defs/scalarShape" },
+        { "$ref": "#/$defs/messageShape" },
+        { "$ref": "#/$defs/enumShape" },
+        { "$ref": "#/$defs/listShape" },
+        { "$ref": "#/$defs/mapShape" }
+      ]
+    },
+    "scalarShape": { "type": "object", "additionalProperties": false, "required": ["kind", "scalar", "longAsString"], "properties": { "kind": { "const": "scalar" }, "scalar": { "$ref": "#/$defs/scalar" }, "longAsString": { "type": "boolean" } } },
+    "messageShape": { "type": "object", "additionalProperties": false, "required": ["kind", "typeName", "delimitedEncoding"], "properties": { "kind": { "const": "message" }, "typeName": { "$ref": "#/$defs/typeName" }, "delimitedEncoding": { "type": "boolean" } } },
+    "enumShape": { "type": "object", "additionalProperties": false, "required": ["kind", "typeName"], "properties": { "kind": { "const": "enum" }, "typeName": { "$ref": "#/$defs/typeName" } } },
+    "elementShape": { "oneOf": [{ "$ref": "#/$defs/scalarShape" }, { "$ref": "#/$defs/messageShape" }, { "$ref": "#/$defs/enumShape" }] },
+    "listShape": { "type": "object", "additionalProperties": false, "required": ["kind", "element", "packed"], "properties": { "kind": { "const": "list" }, "element": { "$ref": "#/$defs/elementShape" }, "packed": { "type": "boolean" } } },
+    "mapShape": { "type": "object", "additionalProperties": false, "required": ["kind", "keyScalar", "value", "delimitedEncoding"], "properties": { "kind": { "const": "map" }, "keyScalar": { "$ref": "#/$defs/scalar" }, "value": { "$ref": "#/$defs/elementShape" }, "delimitedEncoding": { "const": false } } },
+    "scalar": { "enum": ["DOUBLE", "FLOAT", "INT64", "UINT64", "INT32", "FIXED64", "FIXED32", "BOOL", "STRING", "BYTES", "UINT32", "SFIXED32", "SFIXED64", "SINT32", "SINT64"] },
+    "enum": {
+      "type": "object", "additionalProperties": false,
+      "required": ["typeName", "open", "defaultName", "defaultNumber", "values"],
+      "properties": {
+        "typeName": { "$ref": "#/$defs/typeName" },
+        "open": { "type": "boolean" },
+        "defaultName": { "type": "string", "minLength": 1 },
+        "defaultNumber": { "type": "integer" },
+        "values": { "type": "array", "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["number", "aliases"],
+          "properties": {
+            "number": { "type": "integer" },
+            "aliases": { "type": "array", "minItems": 1, "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["name", "localName"],
+              "properties": { "name": { "type": "string", "minLength": 1 }, "localName": { "type": "string", "minLength": 1 } }
+            } }
+          }
+        } }
+      }
+    }
+  }
+}

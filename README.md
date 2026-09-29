@@ -91,15 +91,14 @@ authorizes and resolves it. Edit `config/targets.json` to onboard backends witho
 restarting the bridge. Destination selection is separate from gRPC metadata.
 
 ```ts
-import { createClient } from "@connectrpc/connect";
-import { DemoService } from "./gen/demo_pb.js";
+import { contract as DemoContract } from "./gen/demo_contract.js";
 import { openBridgeConnection, inputQueue } from "@dunkymole/grpc-bridge";
 
 const connection = await openBridgeConnection({
   url: "ws://localhost:8080/tunnel",
   target: "python-demo:50051",
 });
-const client = createClient(DemoService, connection.transport);
+const client = connection.client(DemoContract);
 const input = inputQueue<{ text: string }>();
 
 const receiving = (async () => {
@@ -124,13 +123,14 @@ See the [retry contract and TypeScript example](web/RETRIES.md) and
 ### Connect interceptors
 
 Use connection-level `interceptors` for shared concerns such as request IDs,
-authentication, or logging. Use `interceptTransport()` for metadata or behavior
-specific to one generated client. Both scopes compose over the same connection:
+authentication, or logging. Pass client-specific metadata or behavior in
+`connection.client(contract, { interceptors })`. Both scopes compose over the
+same connection:
 
 ```ts
-import { createClient, type Interceptor } from "@connectrpc/connect";
-import { openBridgeConnection, interceptTransport } from "@dunkymole/grpc-bridge";
-import { DemoService } from "./gen/demo_pb.js";
+import type { Interceptor } from "@connectrpc/connect";
+import { openBridgeConnection } from "@dunkymole/grpc-bridge";
+import { contract as DemoContract } from "./gen/demo_contract.js";
 
 const requestId: Interceptor = (next) => async (req) => {
   req.header.set("x-request-id", crypto.randomUUID());
@@ -141,15 +141,12 @@ const connection = await openBridgeConnection({
   target: "python-demo:50051",
   interceptors: [requestId],
 });
-const clientFor = (name: string) => createClient(DemoService,
-  interceptTransport(connection.transport, {
-    baseUrl: "http://python-demo:50051",
-    interceptors: [(next) => async (req) => {
-      req.header.set("x-client-name", name);
-      return next(req);
-    }],
-  }),
-);
+const clientFor = (name: string) => connection.client(DemoContract, {
+  interceptors: [(next) => async (req) => {
+    req.header.set("x-client-name", name);
+    return next(req);
+  }],
+});
 try {
   const worker = clientFor("background-worker");
   const dashboard = clientFor("dashboard");
@@ -163,11 +160,11 @@ try {
 ```
 
 The clients share one WebSocket and retain independent metadata. Client
-interceptors run before connection interceptors; both run once per logical RPC,
-outside retries, for all four RPC shapes. The bridge does not inspect application
-metadata. Wrapping a transport does not open another connection or own its lifetime.
-See [ordering, header precedence, and shared-lease examples](web/README.md#connect-interceptors)
-and the [runnable interceptor demo](web/examples/interceptors.ts).
+interceptors run before connection interceptors and the mandatory contract guard;
+all run once per logical RPC, outside retries, for all four RPC shapes. The bridge
+does not inspect application metadata. See [ordering, header precedence, and
+shared-lease examples](web/README.md#connect-interceptors) and the
+[runnable interceptor demo](web/examples/interceptors.ts).
 
 ## Development and verification
 

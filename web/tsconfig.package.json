@@ -13,5 +13,5 @@
     "rootDir": "src",
     "outDir": "package-dist"
   },
-  "files": ["src/index.ts"]
+  "files": ["src/index.ts", "src/raw.ts", "src/codegen.ts"]
 }

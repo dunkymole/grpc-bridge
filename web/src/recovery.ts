@@ -21,6 +21,8 @@ export interface Session {
 /** Durable channel: reconnect transports and drain GOAWAY sessions independently. */
 export class RecoveringConnection implements BridgeConnection {
   readonly transport: Transport;
+  private readonly retryTransport: Transport;
+  private readonly interceptorOptions?: InterceptorOptions;
   readonly closed: Promise<void>;
   readonly initial: Promise<void>;
   private finish!: () => void;
@@ -41,6 +43,10 @@ export class RecoveringConnection implements BridgeConnection {
     retry?: RetryOptions,
     interceptorOptions?: InterceptorOptions,
   ) {
+    this.interceptorOptions = interceptorOptions && {
+      ...interceptorOptions,
+      interceptors: [...(interceptorOptions.interceptors ?? [])],
+    };
     this.closed = new Promise((resolve) => {
       this.finish = resolve;
     });
@@ -82,7 +88,7 @@ export class RecoveringConnection implements BridgeConnection {
         );
       },
     };
-    this.transport = new RetryingTransport(
+    this.retryTransport = new RetryingTransport(
       async (signal, timeout, retrying) => {
         // Preserve each call's waitForReady setting on its first selection.
         if (!retrying) return { transport: direct, timeoutMs: timeout };
@@ -91,8 +97,9 @@ export class RecoveringConnection implements BridgeConnection {
       this.stopped.signal,
       retry,
     ).transport;
-    if (interceptorOptions)
-      this.transport = interceptTransport(this.transport, interceptorOptions);
+    this.transport = interceptorOptions
+      ? interceptTransport(this.retryTransport, interceptorOptions)
+      : this.retryTransport;
     // Allow callers to receive the object before lifecycle callbacks run.
     queueMicrotask(() => {
       if (!this.stopped.signal.aborted) void this.connect();
@@ -101,6 +108,23 @@ export class RecoveringConnection implements BridgeConnection {
 
   get state() {
     return this.stateValue;
+  }
+
+  /** Compose application hooks outside retries with a mandatory final guard. */
+  clientTransport(
+    clientInterceptors: readonly import("@connectrpc/connect").Interceptor[] | undefined,
+    finalizeRequest: NonNullable<InterceptorOptions["finalizeRequest"]>,
+  ): Transport {
+    const connectionInterceptors = this.interceptorOptions?.interceptors ?? [];
+    const interceptors = [
+      ...(clientInterceptors ?? []),
+      ...connectionInterceptors,
+    ];
+    return interceptTransport(this.retryTransport, {
+      baseUrl: this.interceptorOptions?.baseUrl ?? "http://backend",
+      interceptors,
+      finalizeRequest,
+    });
   }
 
   subscribe(listener: BridgeConnectionListener): () => void {

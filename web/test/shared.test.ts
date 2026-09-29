@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createSharedBridgeConnection } from "../src/index.js";
+import { createSharedBridgeConnection } from "../src/raw.js";
 
 test("configuration is captured once; failed concurrent opens can be acquired again", async () => {
   let calls = 0;

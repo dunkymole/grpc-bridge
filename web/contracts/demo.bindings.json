@@ -1,0 +1,11 @@
+{
+  "bindings": [
+    {
+      "service": "bridge.demo.v1.DemoService",
+      "lock": "demo.contract.json",
+      "output": "src/gen/demo_contract.ts",
+      "service_import": "./demo_pb.js",
+      "service_export": "DemoService"
+    }
+  ]
+}

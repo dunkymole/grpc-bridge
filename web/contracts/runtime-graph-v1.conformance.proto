@@ -1,0 +1,50 @@
+syntax = "proto2";
+
+package contract.fixture.v1;
+
+service GraphService {
+  rpc Exchange(stream Request) returns (stream Response) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message Child {
+  optional bool enabled = 1 [default = true];
+}
+
+message Request {
+  optional string request_id = 1 [default = "client"];
+  optional ForwardAliases.Value mode_forward = 2 [default = ZERO];
+  optional SwappedAliases.Value mode_swapped = 3 [default = ZERO];
+  repeated ForwardAliases.Value modes = 4 [packed = true];
+  map<string, ForwardAliases.Value> by_name = 5;
+  optional Child child = 6;
+  optional int64 sequence = 7 [default = 9223372036854775807, jstype = JS_STRING];
+  oneof choice {
+    string choice_text = 8;
+    Child choice_child = 9;
+  }
+  repeated int64 sequences = 10 [packed = true, jstype = JS_STRING];
+}
+
+message Response {
+  optional bool accepted = 1;
+}
+
+message ForwardAliases {
+  enum Value {
+    option allow_alias = true;
+    ZERO = 0;
+    FIRST = 1;
+    SECOND = 1;
+  }
+}
+
+message SwappedAliases {
+  enum Value {
+    option allow_alias = true;
+    ZERO = 0;
+    SECOND = 1;
+    FIRST = 1;
+  }
+}

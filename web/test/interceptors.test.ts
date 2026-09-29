@@ -10,7 +10,7 @@ import {
   type Transport,
   type Interceptor,
 } from "@connectrpc/connect";
-import { interceptTransport } from "../src/index.js";
+import { interceptTransport } from "../src/raw.js";
 import { DemoService, MessageSchema } from "../src/gen/demo_pb.js";
 
 const direct: Transport = {

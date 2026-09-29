@@ -1,10 +1,10 @@
 import {
-  createClient,
   Code,
   ConnectError,
   type Client,
 } from "@connectrpc/connect";
 import { DemoService, type Message } from "./gen/demo_pb.js";
+import { contract as DemoContract } from "./gen/demo_contract.js";
 import { openBridgeConnection, type BridgeConnection } from "./index.js";
 import { inputQueue } from "./queue.js";
 import { runChecks } from "./verify.js";
@@ -52,7 +52,7 @@ button("connect").onclick = async () => {
         ? value("token")
         : undefined,
     });
-    client = createClient(DemoService, connection.transport);
+    client = connection.client(DemoContract);
     enabled(true);
     el("status").textContent = "Connected · one HTTP/2 session";
     const current = connection;

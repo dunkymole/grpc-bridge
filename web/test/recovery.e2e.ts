@@ -10,7 +10,7 @@ import {
   createSharedBridgeConnection,
   interceptTransport,
   waitForReady,
-} from "../src/index.js";
+} from "../src/raw.js";
 import { DemoService } from "../src/gen/demo_pb.js";
 
 test(
