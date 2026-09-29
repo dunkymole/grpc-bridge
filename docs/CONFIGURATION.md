@@ -133,13 +133,13 @@ every RPC. A shared handle captures its configuration when constructed; create a
 new handle for a new destination or identity. See the
 [lifecycle and cleanup guide](../web/README.md#lifecycle-and-cleanup).
 
-For client-specific behavior, wrap a connection or lease's transport using
-`interceptTransport(transport, { baseUrl, interceptors })`. The required `baseUrl`
-is a logical backend URL for interceptor requests; it does not open a connection
-or alter routing. The optional interceptor list is captured by the wrapper.
-Per-client interceptors run before connection-level interceptors, and later
-`header.set()` calls take precedence. Both chains remain outside retries. See the
-[examples and precedence rules](../web/README.md#connect-interceptors).
+For client-specific behavior, pass `interceptors` to
+`connection.client(contract, { interceptors })`. The contract is a generated
+`ContractDefinition` that binds the service descriptor, API identity, version,
+and schema fingerprint. Client interceptors run before connection-level
+interceptors and the final contract guard; later `header.set()` calls take
+precedence before the guard replaces the reserved contract header. Both chains
+remain outside retries. See the [examples and precedence rules](../web/README.md#connect-interceptors).
 
 ## Client authentication and forwarding
 
@@ -158,9 +158,8 @@ carry a separate backend credential; it does not change tunnel authentication.
 To forward the same token used for tunnel access:
 
 ```ts
-import { createClient } from "@connectrpc/connect";
 import { openBridgeConnection } from "@dunkymole/grpc-bridge";
-import { DemoService } from "./gen/demo_pb.js";
+import { contract as DemoContract } from "./gen/demo_contract.js";
 
 // Supply the public URL, allowed target, and current token from your application.
 const connection = await openBridgeConnection({
@@ -169,7 +168,7 @@ const connection = await openBridgeConnection({
   tunnelToken: token,
   backendBearerToken: token,
 });
-const client = createClient(DemoService, connection.transport);
+const client = connection.client(DemoContract);
 
 try {
   await client.echo({ text: "hello" });
