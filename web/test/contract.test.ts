@@ -6,7 +6,7 @@ import { Code, ConnectError, createClient, type Interceptor, type Transport } fr
 import { canonicalJson, defineContract, runtimeGraph, contractRecord } from "../src/contracts.js";
 import { contractFinalizer } from "../src/strict-client.js";
 import { interceptTransport } from "../src/interceptors.js";
-import { DemoContract } from "../src/gen/demo_contract.js";
+import { contract as DemoContract } from "../src/gen/demo_contract.js";
 import { DemoService, MessageSchema } from "../src/gen/demo_pb.js";
 import { GraphService } from "../contracts/gen/runtime-graph-v1.conformance_pb.js";
 

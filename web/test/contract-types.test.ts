@@ -1,6 +1,6 @@
 import type { BridgeConnection } from "../src/index.js";
 import type { ContractDefinition } from "../src/codegen.js";
-import { DemoContract } from "../src/gen/demo_contract.js";
+import { contract as DemoContract } from "../src/gen/demo_contract.js";
 import { DemoService } from "../src/gen/demo_pb.js";
 
 declare const connection: BridgeConnection;

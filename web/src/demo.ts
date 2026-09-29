@@ -4,7 +4,7 @@ import {
   type Client,
 } from "@connectrpc/connect";
 import { DemoService, type Message } from "./gen/demo_pb.js";
-import { DemoContract } from "./gen/demo_contract.js";
+import { contract as DemoContract } from "./gen/demo_contract.js";
 import { openBridgeConnection, type BridgeConnection } from "./index.js";
 import { inputQueue } from "./queue.js";
 import { runChecks } from "./verify.js";

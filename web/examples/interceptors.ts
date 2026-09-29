@@ -2,7 +2,7 @@ import type { Interceptor } from "@connectrpc/connect";
 import {
   createSharedBridgeConnection,
 } from "../src/index.js";
-import { DemoContract } from "../src/gen/demo_contract.js";
+import { contract as DemoContract } from "../src/gen/demo_contract.js";
 
 /** Two client-specific chains and a shared default, using only public bridge APIs. */
 export async function runInterceptorExample(

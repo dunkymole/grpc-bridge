@@ -5,8 +5,7 @@
       "lock": "demo.contract.json",
       "output": "src/gen/demo_contract.ts",
       "service_import": "./demo_pb.js",
-      "service_export": "DemoService",
-      "contract_export": "DemoContract"
+      "service_export": "DemoService"
     }
   ]
 }

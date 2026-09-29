@@ -98,11 +98,10 @@ export const runtimeGraph: RuntimeGraph = {
   }
 };
 
-export const DemoContract = defineContract({
+export const contract = defineContract({
   service: serviceDescriptor,
   api: "bridge.demo",
   version: "1.0.0",
   fingerprint: "0b491b435398bbd2f60338717c064a01477d0a93913e17dcfc3894c71cb355f9",
   graph: runtimeGraph,
 });
-export { DemoContract as contract };

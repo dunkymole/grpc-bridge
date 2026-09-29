@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { DemoContract } from "../src/gen/demo_contract.js";
+import { contract as DemoContract } from "../src/gen/demo_contract.js";
 import { openBridgeConnection } from "../src/index.js";
 import { inputQueue } from "../src/queue.js";
 

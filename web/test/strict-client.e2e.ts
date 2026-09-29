@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { Interceptor } from "@connectrpc/connect";
 import { createSharedBridgeConnection } from "../src/index.js";
 import { defineContract, runtimeGraph } from "../src/codegen.js";
-import { DemoContract } from "../src/gen/demo_contract.js";
+import { contract as DemoContract } from "../src/gen/demo_contract.js";
 import { DemoService } from "../src/gen/demo_pb.js";
 import { runChecks } from "../src/verify.js";
 
