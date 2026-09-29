@@ -16,13 +16,17 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func testTLSCertificate(t *testing.T) (tls.Certificate, *x509.CertPool) {
+func testTLSCertificate(t *testing.T) (tls.Certificate, *x509.CertPool, []byte) {
 	t.Helper()
 	now := time.Now()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -54,7 +58,6 @@ func testTLSCertificate(t *testing.T) (tls.Certificate, *x509.CertPool) {
 		SerialNumber: big.NewInt(2),
 		Subject:      pkixName("grpc-bridge local endpoint"),
 		DNSNames:     []string{"localhost"},
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -77,7 +80,8 @@ func testTLSCertificate(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	return cert, roots
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	return cert, roots, caPEM
 }
 
 // Avoid embedding a mutable pkix.Name value in the test cases above.
@@ -147,7 +151,11 @@ func startTLSEcho(t *testing.T, cert tls.Certificate, protocols []string, entere
 			}(conn)
 		}
 	}()
-	return listener.Addr().String()
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return net.JoinHostPort("localhost", port)
 }
 
 func performWebSocketHandshake(t *testing.T, conn net.Conn, host, origin string) (*bufio.Reader, int) {
@@ -161,6 +169,10 @@ func performWebSocketHandshake(t *testing.T, conn net.Conn, host, origin string)
 	response, err := http.ReadResponse(reader, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		body, _ := io.ReadAll(response.Body)
+		t.Logf("WebSocket handshake returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return reader, response.StatusCode
 }
@@ -201,7 +213,7 @@ func readServerFrame(reader *bufio.Reader) (byte, []byte, error) {
 }
 
 func TestWSSLocalCATrustAndRejection(t *testing.T) {
-	cert, roots := testTLSCertificate(t)
+	cert, roots, _ := testTLSCertificate(t)
 	g := newGateway(config{upstream: startTCPEcho(t), origin: "https://client.example", maxConnections: 2})
 	defer g.stop()
 	server := httptest.NewUnstartedServer(g)
@@ -235,11 +247,21 @@ func TestWSSLocalCATrustAndRejection(t *testing.T) {
 	trusted.Close()
 
 	attempts := g.metrics.attempts.Load()
-	for _, serverName := range []string{"localhost", "wrong.invalid"} {
-		untrusted, err := tls.Dial("tcp", address, &tls.Config{RootCAs: x509.NewCertPool(), ServerName: serverName, NextProtos: []string{"http/1.1"}})
+	for _, tc := range []struct {
+		name  string
+		roots *x509.CertPool
+	}{
+		{name: "unknown CA", roots: x509.NewCertPool()},
+		{name: "trusted CA with wrong hostname", roots: roots},
+	} {
+		serverName := "localhost"
+		if tc.name == "trusted CA with wrong hostname" {
+			serverName = "wrong.invalid"
+		}
+		untrusted, err := tls.Dial("tcp", address, &tls.Config{RootCAs: tc.roots, ServerName: serverName, NextProtos: []string{"http/1.1"}})
 		if err == nil {
 			untrusted.Close()
-			t.Fatalf("untrusted or mismatched WSS certificate accepted for %s", serverName)
+			t.Fatalf("WSS accepted %s", tc.name)
 		}
 	}
 	if got := g.metrics.attempts.Load(); got != attempts {
@@ -248,20 +270,29 @@ func TestWSSLocalCATrustAndRejection(t *testing.T) {
 }
 
 func TestUpstreamTLSRequiresTrustAndH2ALPN(t *testing.T) {
-	cert, roots := testTLSCertificate(t)
+	cert, roots, _ := testTLSCertificate(t)
 	for _, tc := range []struct {
 		name      string
 		protocols []string
 		trust     *x509.CertPool
+		wrongHost bool
 		wantEcho  bool
 	}{
 		{name: "trusted h2", protocols: []string{"h2"}, trust: roots, wantEcho: true},
 		{name: "untrusted certificate", protocols: []string{"h2"}, trust: x509.NewCertPool()},
-		{name: "wrong ALPN", protocols: []string{"http/1.1"}, trust: roots},
+		{name: "trusted certificate with wrong hostname", protocols: []string{"h2"}, trust: roots, wrongHost: true},
+		{name: "no ALPN", protocols: nil, trust: roots},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var appEntered, appBytes atomic.Int32
 			address := startTLSEcho(t, cert, tc.protocols, &appEntered, &appBytes)
+			if tc.wrongHost {
+				_, port, err := net.SplitHostPort(address)
+				if err != nil {
+					t.Fatal(err)
+				}
+				address = net.JoinHostPort("127.0.0.1", port)
+			}
 			g := newGateway(config{upstream: address, origin: "http://localhost", upstreamTLS: true, upstreamRoots: tc.trust, maxConnections: 1})
 			defer g.stop()
 			server := httptest.NewServer(g)
@@ -301,7 +332,7 @@ func TestUpstreamTLSRequiresTrustAndH2ALPN(t *testing.T) {
 }
 
 func TestTLSCertificateHasExpectedHostname(t *testing.T) {
-	cert, roots := testTLSCertificate(t)
+	cert, roots, _ := testTLSCertificate(t)
 	parsed, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
 		t.Fatal(err)
@@ -309,10 +340,138 @@ func TestTLSCertificateHasExpectedHostname(t *testing.T) {
 	if err := parsed.VerifyHostname("localhost"); err != nil {
 		t.Fatalf("local test certificate lacks localhost SAN: %v", err)
 	}
-	if err := parsed.VerifyHostname("127.0.0.1"); err != nil {
-		t.Fatalf("local test certificate lacks IP SAN: %v", err)
+	if err := parsed.VerifyHostname("127.0.0.1"); err == nil {
+		t.Fatal("DNS-only certificate unexpectedly validates for an IP address")
 	}
 	if len(roots.Subjects()) != 1 {
 		t.Fatalf("expected isolated one-root trust pool, got %d subjects", len(roots.Subjects()))
 	}
+}
+
+func TestBridgeProcessUsesSSL_CERT_FILEForWSSAndUpstream(t *testing.T) {
+	cert, roots, caPEM := testTLSCertificate(t)
+	temp := t.TempDir()
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	keyDER, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	certPath, keyPath, rootsPath := filepath.Join(temp, "bridge.pem"), filepath.Join(temp, "bridge-key.pem"), filepath.Join(temp, "roots.pem")
+	for path, data := range map[string][]byte{certPath: certPEM, keyPath: keyPEM, rootsPath: caPEM} {
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var appEntered, appBytes atomic.Int32
+	upstream := startTLSEcho(t, cert, []string{"h2"}, &appEntered, &appBytes)
+	listen, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listenAddress := listen.Addr().String()
+	listen.Close()
+	healthListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthAddress := healthListener.Addr().String()
+	healthListener.Close()
+
+	binary := filepath.Join(temp, "grpc-bridge")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	output, err := build.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build production bridge binary: %v\n%s", err, output)
+	}
+	cmd := exec.Command(binary)
+	cmd.Env = append(filteredEnvironment(
+		"SSL_CERT_FILE", "LISTEN", "UPSTREAM", "UPSTREAM_TLS", "TLS_CERT", "TLS_KEY", "ALLOWED_ORIGIN",
+		"TUNNEL_TOKEN", "ADMISSION_URL", "TARGETS_FILE", "HEALTH_LISTEN", "MAX_CONNECTIONS",
+		"MAX_CONNECTIONS_PER_PRINCIPAL", "MAX_ADMISSION_GRANT_LIFETIME", "MAX_TUNNEL_LIFETIME", "DRAIN_GRACE_PERIOD",
+	),
+		"SSL_CERT_FILE="+rootsPath,
+		"LISTEN="+listenAddress,
+		"UPSTREAM="+upstream,
+		"UPSTREAM_TLS=true",
+		"TLS_CERT="+certPath,
+		"TLS_KEY="+keyPath,
+		"ALLOWED_ORIGIN=https://client.example",
+		"HEALTH_LISTEN="+healthAddress,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(os.Interrupt)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case <-done:
+		case <-time.After(6 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
+	})
+
+	client := &http.Client{
+		Timeout:   300 * time.Millisecond,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "localhost"}},
+	}
+	readyURL := "https://" + listenAddress + "/healthz"
+	readyURL = strings.Replace(readyURL, "127.0.0.1:", "localhost:", 1)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		response, requestErr := client.Get(readyURL)
+		if requestErr == nil {
+			response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("production bridge did not serve verified WSS listener: %v", requestErr)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	parsedReadyURL, err := url.Parse(readyURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := parsedReadyURL.Host
+	conn, err := tls.Dial("tcp", address, &tls.Config{RootCAs: roots, ServerName: "localhost", NextProtos: []string{"http/1.1"}})
+	if err != nil {
+		t.Fatalf("production WSS verification failed: %v", err)
+	}
+	reader, status := performWebSocketHandshake(t, conn, address, "https://client.example")
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("production TLS tunnel got HTTP %d", status)
+	}
+	payload := []byte("production trust store")
+	if err := writeAll(conn, clientFrame(2, true, payload)); err != nil {
+		t.Fatal(err)
+	}
+	op, echoed, err := readServerFrame(reader)
+	if err != nil || op != 2 || !bytes.Equal(echoed, payload) {
+		t.Fatalf("production TLS echo op=%d payload=%q err=%v", op, echoed, err)
+	}
+	if appEntered.Load() != 1 || appBytes.Load() != int32(len(payload)) {
+		t.Fatalf("production trust store did not reach upstream app: entries=%d bytes=%d", appEntered.Load(), appBytes.Load())
+	}
+	conn.Close()
+}
+
+func filteredEnvironment(keys ...string) []string {
+	wanted := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		wanted[key] = struct{}{}
+	}
+	filtered := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, remove := wanted[key]; !remove {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }

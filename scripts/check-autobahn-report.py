@@ -4,6 +4,7 @@
 import json
 import pathlib
 import sys
+from typing import List
 
 AGENT = "grpc-bridge-go-relay"
 POLICY_BEHAVIORS = {
@@ -27,9 +28,9 @@ def _read_json(path: pathlib.Path):
     return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
 
 
-def validate_report(report_dir: pathlib.Path, expected_file: pathlib.Path) -> list[str]:
+def validate_report(report_dir: pathlib.Path, expected_file: pathlib.Path) -> List[str]:
     """Return validation errors; an empty list means every expected case passed."""
-    errors: list[str] = []
+    errors: List[str] = []
     try:
         expected = _read_json(expected_file)
     except (OSError, UnicodeDecodeError, ValueError) as exc:

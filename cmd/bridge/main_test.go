@@ -13,11 +13,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 type memoryConn struct{ bytes.Buffer }
+
+type readCountingConn struct {
+	net.Conn
+	readBytes atomic.Int64
+}
+
+func (c *readCountingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.readBytes.Add(int64(n))
+	return n, err
+}
 
 func (*memoryConn) Close() error                     { return nil }
 func (*memoryConn) LocalAddr() net.Addr              { return nil }
@@ -146,6 +158,67 @@ func TestLargeFrameStreamsInChunks(t *testing.T) {
 	}
 	if !bytes.Equal(payload, upstream.Bytes()) {
 		t.Fatal("large payload corrupted")
+	}
+}
+
+func TestRelayBackpressuresSlowUpstreamWithinOneChunk(t *testing.T) {
+	wsServer, wsClient := net.Pipe()
+	upstream, backend := net.Pipe()
+	defer wsServer.Close()
+	defer wsClient.Close()
+	defer upstream.Close()
+	defer backend.Close()
+	wsObserved := &readCountingConn{Conn: wsServer}
+	payload := bytes.Repeat([]byte{0x5a}, maxFrame)
+	frame := clientFrame(2, true, payload)
+	s := socket{conn: wsServer, reader: bufio.NewReaderSize(wsObserved, 4096)}
+	relayDone := make(chan error, 1)
+	go func() { relayDone <- s.relay(upstream) }()
+	writerDone := make(chan error, 1)
+	go func() { writerDone <- writeAll(wsClient, frame) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for wsObserved.readBytes.Load() < bufferSize && time.Now().Before(deadline) {
+		select {
+		case err := <-relayDone:
+			t.Fatalf("relay stopped before the slow upstream blocked it: %v", err)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if got := wsObserved.readBytes.Load(); got < bufferSize {
+		t.Fatalf("relay consumed only %d bytes before deadline", got)
+	}
+	// The 1 MiB frame is still arriving, while relay is blocked on its first
+	// 16 KiB upstream write. Only that chunk plus the bounded bufio read-ahead
+	// may have crossed the WebSocket reader.
+	time.Sleep(50 * time.Millisecond)
+	consumed := wsObserved.readBytes.Load()
+	if consumed >= int64(len(frame)) {
+		t.Fatalf("relay buffered the full %d-byte frame for a stalled upstream", len(frame))
+	}
+	if consumed > bufferSize+8192 {
+		t.Fatalf("slow upstream allowed %d bytes past a %d-byte relay chunk", consumed, bufferSize)
+	}
+	select {
+	case <-writerDone:
+		t.Fatal("large client frame finished despite the unread upstream")
+	default:
+	}
+
+	// Closing either leg is how cancellation/forced shutdown releases a
+	// blocked net.Pipe write and the peer producer; both goroutines must leave.
+	_ = backend.Close()
+	_ = wsServer.Close()
+	_ = wsClient.Close()
+	select {
+	case <-relayDone:
+	case <-time.After(time.Second):
+		t.Fatal("relay remained blocked after both legs closed")
+	}
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatal("client producer remained blocked after WebSocket close")
 	}
 }
 func TestRejectMalformedFrames(t *testing.T) {

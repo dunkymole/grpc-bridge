@@ -40,7 +40,7 @@ Run the suite in an isolated Compose project and host port so it does not share 
 local bridge stack:
 
 ```sh
-BRIDGE_PORT=18081 BRIDGE_ORIGIN=http://localhost:18081 \
+BRIDGE_PORT=18081 \
   docker compose --project-name grpc-bridge-browser-gates \
   -f compose.yaml -f compose.browser.yaml \
   up --build --abort-on-container-exit --exit-code-from browser-test
@@ -52,6 +52,9 @@ Reports are written under `web/test-results/`. The same core checks passed in
 headless Edge on 28 September 2026 using two concurrent per-client interceptor
 wrappers over one shared connection, including deadlines, cancellation, trailers,
 and large messages.
+
+The strict-contract client path passed all six checks in the pinned Chromium,
+Firefox, and WebKit images on 29 September 2026.
 
 ## WebSocket conformance checks
 
@@ -80,6 +83,23 @@ outside this focused correctness run. This subset is not a claim of full Autobah
 certification. `python -m unittest discover -s scripts -p 'test_*.py'` verifies
 that the report checker rejects missing, empty, stale, incomplete, duplicate-key,
 and failing reports, and enforces the diagnostic policy.
+
+## TLS and slow-peer checks
+
+Go tests create a local CA and verify WSS through the production gateway and
+upstream TLS with HTTP/2 ALPN. They cover trusted certificates, unknown roots,
+wrong hostnames, and a trusted upstream without ALPN; certificate verification
+remains enabled. A subprocess test builds and runs the production binary with
+`SSL_CERT_FILE` set to the test CA, then verifies WSS and the upstream application
+echo, so this also exercises Go's normal process trust configuration.
+
+`TestRelayBackpressuresSlowUpstreamWithinOneChunk` stalls the upstream side of a
+real `net.Pipe`, sends a 1 MiB binary WebSocket frame, and checks that the relay
+reads only its current chunk plus bounded reader lookahead before blocking. It
+then closes both legs and verifies that the relay and producer goroutines exit.
+The HTTP/2 response-queue and HPACK tests cover their corresponding receive
+budgets. These focused tests do not measure process RSS or certify sustained
+slow-peer load.
 
 ## Initial baseline: 14–15 September 2026
 
@@ -146,5 +166,6 @@ the existing Python image only as a temporary inspection tool.
 
 No comprehensive HTTP/2 audit, long-duration memory stress, production load
 benchmark, multi-browser support certification, or external security review has
-been completed. The Autobahn selection is partial; optional WSS/upstream TLS modes
-still need deployment-level interoperability coverage. See the roadmap.
+been completed. The Autobahn selection is partial. The TLS checks use local test
+certificates and do not certify a production certificate/deployment topology.
+See the roadmap.

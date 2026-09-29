@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 run_id="${GITHUB_RUN_ID:-local}-$(date -u +%Y%m%d%H%M%S)-$$"
 project="grpc-bridge-autobahn-${run_id}"
+export AUTOBAHN_RUN_ID="$run_id"
 compose=(docker compose --project-name "$project" --file "$root/test/autobahn/compose.yaml")
 report_root="$root/test-results/autobahn"
 run_dir="$report_root/$run_id"
@@ -24,5 +25,5 @@ cleanup() {
 }
 trap cleanup EXIT
 
-AUTOBahn_RUN_ID="$run_id" "${compose[@]}" up --build --abort-on-container-exit --exit-code-from autobahn
+"${compose[@]}" up --build --abort-on-container-exit --exit-code-from autobahn
 python3 "$root/scripts/check-autobahn-report.py" "$run_dir/report" "$root/test/autobahn/expected-cases.json"

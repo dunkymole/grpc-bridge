@@ -1,4 +1,7 @@
 services:
+  bridge:
+    environment:
+      ALLOWED_ORIGIN: http://bridge:8080
   browser-test:
     build:
       context: .
