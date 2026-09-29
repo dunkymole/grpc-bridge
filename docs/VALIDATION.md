@@ -61,13 +61,16 @@ and large messages.
 The strict-contract client path passed all six checks in the pinned Chromium,
 Firefox, and WebKit images on 29 September 2026.
 
-CI runs the browser and Autobahn projects separately from the ordinary bridge
-Compose project. It always removes each named test project and uploads
+CI has a 30-minute job bound and runs the browser and Autobahn projects separately
+from the ordinary bridge Compose project, with run-scoped project names. It removes
+each named test project and uploads
 `web/test-results/` and `test-results/autobahn/` as the
 `bridge-validation-<run>-<attempt>` artifact, including reports and failure
 traces when present. The browser job has a 1 GiB shared-memory allocation and
-uses the pinned Playwright image; Autobahn is limited to the checked-in 57-case
-selection and may report the explicit diagnostic outcomes documented below.
+uses the pinned Playwright image. The descriptor fixture check uses a digest-pinned
+Node/Alpine image and protobuf 31.1-r1. Autobahn is limited to the checked-in
+57-case selection and may report the explicit diagnostic outcomes documented
+below.
 
 ## WebSocket conformance checks
 
