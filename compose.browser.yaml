@@ -1,0 +1,17 @@
+services:
+  bridge:
+    environment:
+      ALLOWED_ORIGIN: http://bridge:8080
+  browser-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser-tests
+    environment:
+      BROWSER_BASE_URL: http://bridge:8080
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    volumes:
+      - ./web/test-results:/src/web/test-results
+    depends_on:
+      bridge:
+        condition: service_healthy
+    shm_size: 1gb
