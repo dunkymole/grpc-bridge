@@ -1,12 +1,20 @@
 name: CI
-on: [push, pull_request]
+on: [push, pull_request, merge_group]
+concurrency:
+  group: grpc-bridge-ci-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: grpc-bridge-ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
@@ -16,11 +24,20 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - run: go test -race ./...
       - run: go vet ./...
       - run: go test ./cmd/bridge -fuzz=FuzzRelay -fuzztime=10s
       - run: npm ci && npm run build && npm test
         working-directory: web
+      - run: docker run --rm -v "${PWD}:/src" -w /src node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 sh -lc 'apk add --no-cache protobuf=31.1-r1 >/dev/null && npm run contracts:verify'
+        working-directory: web
+      - run: go test -race ./...
+        working-directory: examples/admission
+      - run: go vet ./...
+        working-directory: examples/admission
       - run: docker compose up --build -d --wait
       - run: npm run test:e2e && npm run example
         working-directory: web
@@ -31,5 +48,59 @@ jobs:
         working-directory: web
         env:
           TUNNEL_TOKEN: local-ci-test-token
+      - run: docker compose --project-name "grpc-bridge-browser-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -f compose.yaml -f compose.browser.yaml up --build --abort-on-container-exit --exit-code-from browser-test
+        env:
+          BRIDGE_PORT: 18081
       - if: always()
-        run: docker compose logs && docker compose down
+        run: |
+          docker compose --project-name "grpc-bridge-browser-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -f compose.yaml -f compose.browser.yaml logs --no-color || true
+          docker compose --project-name "grpc-bridge-browser-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -f compose.yaml -f compose.browser.yaml down --remove-orphans || true
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: bash scripts/run-autobahn.sh
+      - if: always()
+        run: |
+          docker compose logs --no-color || true
+          docker compose down --remove-orphans || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bridge-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web/test-results/**
+            test-results/autobahn/**
+          if-no-files-found: ignore
+
+  proposed-contract-pair:
+    name: Test this bridge revision with reviewed Proto Contract
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMPOSE_PROJECT_NAME: proto-contract-pair-${{ github.run_id }}-${{ github.run_attempt }}
+      GRPC_BRIDGE_REPOSITORY: ${{ github.event.pull_request.head.repo.clone_url || 'https://github.com/dunkymole/grpc-bridge.git' }}
+      GRPC_BRIDGE_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+      PROTO_CONTRACT_REVIEWED_REF: 6d028e3632e7b027f380cbc6b0449dfe4ca4b6c1
+    steps:
+      - name: Fetch reviewed Proto Contract revision
+        run: |
+          set -euo pipefail
+          mkdir proto-contract
+          git -C proto-contract init
+          git -C proto-contract remote add origin https://github.com/dunkymole/proto-contract.git
+          git -C proto-contract fetch --depth=1 origin "$PROTO_CONTRACT_REVIEWED_REF"
+          git -C proto-contract checkout --detach FETCH_HEAD
+
+      - name: Run native and actual-package matrix against this bridge revision
+        run: pwsh ./scripts/test-all.ps1
+        working-directory: proto-contract
+
+      - name: Run versioned rollout against this bridge revision
+        run: pwsh ./scripts/test-rollout.ps1
+        working-directory: proto-contract
+
+      - name: Record pair diagnostics and clean the matrix project
+        if: always()
+        working-directory: proto-contract
+        run: |
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color || true
+          docker compose --project-name "$COMPOSE_PROJECT_NAME" down --remove-orphans || true
