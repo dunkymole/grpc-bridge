@@ -1,5 +1,5 @@
-import { createClient, Code, ConnectError } from "@connectrpc/connect";
-import { DemoService } from "../src/gen/demo_pb.js";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { DemoContract } from "../src/gen/demo_contract.js";
 import { openBridgeConnection } from "../src/index.js";
 import { inputQueue } from "../src/queue.js";
 
@@ -17,7 +17,7 @@ export async function connectDemo(
     tunnelToken,
     backendBearerToken: options.forwardToken ? tunnelToken : undefined,
   });
-  const client = createClient(DemoService, connection.transport);
+  const client = connection.client(DemoContract);
   return { client, close: () => connection.close() };
 }
 

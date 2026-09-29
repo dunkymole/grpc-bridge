@@ -24,7 +24,7 @@ import { RecoveringConnection } from "../src/recovery.js";
 import { type RetryOptions, type RetryPolicy } from "../src/retry.js";
 import { DemoService, MessageSchema } from "../src/gen/demo_pb.js";
 import { frame } from "../src/framing.js";
-import { interceptTransport } from "../src/index.js";
+import { interceptTransport } from "../src/raw.js";
 
 const policy: RetryPolicy = {
   maxAttempts: 3,

@@ -39,9 +39,9 @@ Retries do not provide exactly-once execution; use application idempotency keys
 when needed.
 
 ```ts
-import { Code, createClient } from "@connectrpc/connect";
+import { Code } from "@connectrpc/connect";
 import { createBridgeConnection } from "@dunkymole/grpc-bridge";
-import { Greeter } from "./gen/greeter_pb.js";
+import { GreeterContract } from "./gen/greeter_contract.js";
 
 const connection = createBridgeConnection({
   url: "wss://bridge.example.com/tunnel",
@@ -61,7 +61,7 @@ const connection = createBridgeConnection({
     throttling: { maxTokens: 10, tokenRatio: 0.1 },
   },
 });
-const client = createClient(Greeter, connection.transport);
+const client = connection.client(GreeterContract);
 try {
   console.log(await client.sayHello({ name: "Ada" }, { timeoutMs: 5000 }));
 } finally {
@@ -121,12 +121,13 @@ delay. Configured attempts send `grpc-previous-rpc-attempts: 1`, then `2`, and s
 the client owns this metadata and replaces any caller-supplied value.
 
 Connection-level and per-client Connect interceptor chains run once per logical
-RPC, outside the retry layer. Headers they produce are copied to each attempt;
-the retry layer still owns `grpc-previous-rpc-attempts`, and attempt deadlines can
-reduce `grpc-timeout`. Backend bearer-token providers run on connection creation,
+RPC, before the strict method/header guard and retry layer. The guard stamps the
+reserved contract header on a defensive copy; the retry layer still owns
+`grpc-previous-rpc-attempts`, and attempt deadlines can reduce `grpc-timeout`.
+Backend bearer-token providers run on connection creation,
 so a replacement session can supply a refreshed default credential when no
 explicit `authorization` header was provided. See the
-[interceptor guide](README.md#connect-interceptors).
+[interceptor guide](README.md#interceptors-and-contract-stamping).
 
 The original deadline covers interceptors, connection selection, all attempts,
 and retry delays.

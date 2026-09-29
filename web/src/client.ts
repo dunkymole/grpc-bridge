@@ -22,6 +22,19 @@ export type BridgeConnectionState =
 /** Per-RPC option: wait for connectivity, respecting cancellation and deadline. */
 export const waitForReady = createContextKey(false);
 
+const managedConnections = new WeakMap<object, RecoveringConnection>();
+
+/** @internal Used only to build contract-bound clients from managed handles. */
+export function managedClientTransport(
+  owner: object,
+  clientInterceptors: readonly Interceptor[] | undefined,
+  finalizeRequest: NonNullable<import("./interceptors.js").InterceptorOptions["finalizeRequest"]>,
+): Transport {
+  const connection = managedConnections.get(owner);
+  if (!connection) throw new TypeError("Connection is not a managed bridge handle");
+  return connection.clientTransport(clientInterceptors, finalizeRequest);
+}
+
 export interface BridgeConnectionEvent {
   state: BridgeConnectionState;
   reason?: "local" | "remote" | "error";
@@ -67,7 +80,7 @@ async function resolveToken(source?: TokenSource): Promise<string | undefined> {
 export function createBridgeConnection(
   options: BridgeConnectionOptions,
 ): BridgeConnection {
-  return new RecoveringConnection(
+  const connection = new RecoveringConnection(
     async (signal) => {
       const [tunnelToken, backendBearerToken] = await Promise.all([
         resolveToken(options.tunnelToken),
@@ -99,6 +112,8 @@ export function createBridgeConnection(
       baseUrl: `${options.scheme ?? "http"}://${options.authority ?? options.target ?? "backend"}`,
     },
   );
+  managedConnections.set(connection, connection);
+  return connection;
 }
 
 /** Await the initial connection attempt; subsequent transport loss heals automatically. */
@@ -176,7 +191,7 @@ export class SharedBridgeConnection {
       throw error;
     }
     let release: Promise<void> | undefined;
-    return {
+    const lease: BridgeConnectionLease = {
       get state() {
         return connection.state;
       },
@@ -195,6 +210,8 @@ export class SharedBridgeConnection {
         return release;
       },
     };
+    managedConnections.set(lease, connection as RecoveringConnection);
+    return lease;
   }
 
   /** Permanently rejects acquisitions, cancels pending opens, and closes active leases. */

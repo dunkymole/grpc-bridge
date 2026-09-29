@@ -1,9 +1,8 @@
-import { createClient, type Interceptor } from "@connectrpc/connect";
+import type { Interceptor } from "@connectrpc/connect";
 import {
   createSharedBridgeConnection,
-  interceptTransport,
 } from "../src/index.js";
-import { DemoService } from "../src/gen/demo_pb.js";
+import { DemoContract } from "../src/gen/demo_contract.js";
 
 /** Two client-specific chains and a shared default, using only public bridge APIs. */
 export async function runInterceptorExample(
@@ -39,26 +38,18 @@ export async function runInterceptorExample(
           req.header.set("x-client-name", name);
           return next(req);
         };
-      const worker = createClient(
-        DemoService,
-        interceptTransport(workerLease.transport, {
-          baseUrl: `http://${target}`,
-          interceptors: [clientLabel("background-worker")],
-        }),
-      );
-      const dashboard = createClient(
-        DemoService,
-        interceptTransport(dashboardLease.transport, {
-          baseUrl: `http://${target}`,
-          interceptors: [
-            clientLabel("dashboard"),
-            (next) => async (req) => {
-              req.header.set("x-request-source", "interactive");
-              return next(req);
-            },
-          ],
-        }),
-      );
+      const worker = workerLease.client(DemoContract, {
+        interceptors: [clientLabel("background-worker")],
+      });
+      const dashboard = dashboardLease.client(DemoContract, {
+        interceptors: [
+          clientLabel("dashboard"),
+          (next) => async (req) => {
+            req.header.set("x-request-source", "interactive");
+            return next(req);
+          },
+        ],
+      });
       // The clients attach independent labels while sharing one connection.
       const replies = await Promise.all([
         worker.echo({ text: "background work" }),
