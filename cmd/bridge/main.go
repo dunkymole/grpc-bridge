@@ -7,6 +7,7 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -38,6 +39,12 @@ type config struct {
 	maxConnections          int
 	upstreamTLS             bool
 	targetsFile             string
+	admissionURL            string
+	maxPerPrincipal         int
+	maxGrantLifetime        time.Duration
+	maxTunnelLifetime       time.Duration
+	admissionClient         *http.Client
+	upstreamRoots           *x509.CertPool
 }
 
 type targetPolicy struct {
@@ -99,15 +106,28 @@ func (g *gateway) destination(r *http.Request) (string, bool, int) {
 
 type gateway struct {
 	config
-	slots    chan struct{}
-	mu       sync.Mutex
-	active   map[net.Conn]struct{}
-	metrics  metrics
-	stopping bool
+	slots      chan struct{}
+	mu         sync.Mutex
+	active     map[net.Conn]struct{}
+	principals map[string]int
+	metrics    metrics
+	stopping   bool
 }
 
 func newGateway(c config) *gateway {
-	return &gateway{config: c, slots: make(chan struct{}, c.maxConnections), active: make(map[net.Conn]struct{})}
+	if c.maxPerPrincipal < 1 {
+		c.maxPerPrincipal = 8
+	}
+	if c.maxGrantLifetime <= 0 {
+		c.maxGrantLifetime = 15 * time.Minute
+	}
+	if c.maxTunnelLifetime <= 0 {
+		c.maxTunnelLifetime = time.Hour
+	}
+	if c.admissionClient == nil {
+		c.admissionClient = newAdmissionHTTPClient()
+	}
+	return &gateway{config: c, slots: make(chan struct{}, c.maxConnections), active: make(map[net.Conn]struct{}), principals: make(map[string]int)}
 }
 func contains(value, token string) bool {
 	for _, v := range strings.Split(value, ",") {
@@ -116,6 +136,71 @@ func contains(value, token string) bool {
 		}
 	}
 	return false
+}
+
+func tunnelCredential(r *http.Request, expectedToken string, admission bool) (string, int) {
+	profiles, credentials := 0, 0
+	credential := ""
+	for _, value := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for _, item := range strings.Split(value, ",") {
+			item = strings.TrimSpace(item)
+			if item == protocol {
+				profiles++
+				continue
+			}
+			if strings.HasPrefix(item, "auth.") {
+				credentials++
+				credential = strings.TrimPrefix(item, "auth.")
+			}
+		}
+	}
+	if profiles != 1 || credentials > 1 {
+		return "", http.StatusBadRequest
+	}
+	if admission {
+		if credentials != 1 || !validTunnelCredential(credential) {
+			return "", http.StatusUnauthorized
+		}
+		return credential, 0
+	}
+	if expectedToken != "" {
+		if credentials != 1 || subtle.ConstantTimeCompare([]byte(credential), []byte(expectedToken)) != 1 {
+			return "", http.StatusUnauthorized
+		}
+	}
+	return credential, 0
+}
+
+func validTunnelCredential(credential string) bool {
+	if credential == "" || len(credential) > maxCredentialBytes {
+		return false
+	}
+	for _, char := range credential {
+		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || strings.ContainsRune("-._~", char)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (g *gateway) acquirePrincipal(subject string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopping || g.principals[subject] >= g.maxPerPrincipal {
+		return false
+	}
+	g.principals[subject]++
+	return true
+}
+
+func (g *gateway) releasePrincipal(subject string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.principals[subject] <= 1 {
+		delete(g.principals, subject)
+		return
+	}
+	g.principals[subject]--
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -148,23 +233,13 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reject("origin denied", 403, "origin")
 		return
 	}
-	offered := strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",")
-	selected, authenticated := "", g.token == ""
-	for _, p := range offered {
-		p = strings.TrimSpace(p)
-		if selected == "" && p == protocol {
-			selected = p
+	credential, status := tunnelCredential(r, g.token, g.admissionURL != "")
+	if status != 0 {
+		reason := "auth"
+		if status == http.StatusBadRequest {
+			reason = "profile"
 		}
-		if strings.HasPrefix(p, "auth.") && subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(p, "auth.")), []byte(g.token)) == 1 {
-			authenticated = true
-		}
-	}
-	if !authenticated {
-		reject("unauthorized", 401, "auth")
-		return
-	}
-	if selected == "" {
-		reject("unsupported tunnel profile", 400, "profile")
+		reject("invalid tunnel credentials or profile", status, reason)
 		return
 	}
 	select {
@@ -174,18 +249,48 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reject("connection capacity reached", 503, "capacity")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	destination, useTLS, status := g.destination(r)
 	if status != 0 {
-		cancel()
 		reject("destination unavailable or not allowed", status, map[int]string{400: "destination", 403: "destination_denied", 503: "policy"}[status])
 		return
 	}
+	principal := "anonymous"
+	var grantExpiry time.Time
+	if g.admissionURL != "" {
+		grant, grantStatus := g.authorizeTarget(r.Context(), credential, destination)
+		if grantStatus != 0 {
+			failureReason := "admission"
+			if grantStatus == http.StatusUnauthorized || grantStatus == http.StatusForbidden {
+				failureReason = "auth"
+			}
+			reject("tunnel admission denied", grantStatus, failureReason)
+			return
+		}
+		principal = grant.subject
+		grantExpiry = grant.expires
+	} else if g.token != "" {
+		principal = "static"
+	}
+	if !g.acquirePrincipal(principal) {
+		reject("principal connection capacity reached", 429, "capacity")
+		return
+	}
+	defer g.releasePrincipal(principal)
+	authorizedAt := time.Now()
+	tunnelDeadline := authorizedAt.Add(g.maxTunnelLifetime)
+	if !grantExpiry.IsZero() && grantExpiry.Before(tunnelDeadline) {
+		tunnelDeadline = grantExpiry
+	}
+	dialDeadline := time.Now().Add(5 * time.Second)
+	if tunnelDeadline.Before(dialDeadline) {
+		dialDeadline = tunnelDeadline
+	}
+	ctx, cancel := context.WithDeadline(r.Context(), dialDeadline)
 	defer cancel()
 	dialStart := time.Now()
 	var upstream net.Conn
 	if useTLS {
-		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}}
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}, RootCAs: g.upstreamRoots}
 		d := &tls.Dialer{NetDialer: &net.Dialer{}, Config: tlsConfig}
 		upstream, err = d.DialContext(ctx, "tcp", destination)
 		if err == nil && upstream.(*tls.Conn).ConnectionState().NegotiatedProtocol != "h2" {
@@ -202,6 +307,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	upstream = &countedConn{Conn: upstream, bytes: &g.metrics.toBackend}
 	defer upstream.Close()
+	if !time.Now().Before(tunnelDeadline) {
+		reject("tunnel grant expired", http.StatusForbidden, "auth")
+		return
+	}
 	h, ok := w.(http.Hijacker)
 	if !ok {
 		reject("upgrade unavailable", 500, "upgrade")
@@ -212,6 +321,12 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	if !time.Now().Before(tunnelDeadline) {
+		// The peer can stall a response flush indefinitely here. The grant has
+		// already expired, so closing is sufficient and releases both legs and
+		// the admission slot through the normal defers.
+		return
+	}
 	g.mu.Lock()
 	if g.stopping {
 		failure = "shutdown"
@@ -221,10 +336,25 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	g.active[conn] = struct{}{}
 	g.mu.Unlock()
 	defer func() { g.mu.Lock(); delete(g.active, conn); g.mu.Unlock() }()
+	lifetimeTimer := time.AfterFunc(time.Until(tunnelDeadline), func() {
+		_ = conn.Close()
+		_ = upstream.Close()
+	})
+	defer lifetimeTimer.Stop()
+	if !time.Now().Before(tunnelDeadline) {
+		return
+	}
 	sum := sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: %s\r\n\r\n", base64.StdEncoding.EncodeToString(sum[:]), selected)
+	writeDeadline := time.Now().Add(10 * time.Second)
+	if tunnelDeadline.Before(writeDeadline) {
+		writeDeadline = tunnelDeadline
+	}
+	conn.SetWriteDeadline(writeDeadline)
+	fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: %s\r\n\r\n", base64.StdEncoding.EncodeToString(sum[:]), protocol)
 	if rw.Flush() != nil {
+		return
+	}
+	if !time.Now().Before(tunnelDeadline) {
 		return
 	}
 	failure = ""
@@ -457,6 +587,30 @@ func env(name, fallback string) string {
 	return fallback
 }
 
+func envInt(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		log.Fatalf("%s must be an integer", name)
+	}
+	return parsed
+}
+
+func envDuration(name string, fallback time.Duration) time.Duration {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		log.Fatalf("%s must be a Go duration", name)
+	}
+	return parsed
+}
+
 func main() {
 	listen := flag.String("listen", env("LISTEN", "127.0.0.1:8080"), "HTTP listen address")
 	upstream := flag.String("upstream", env("UPSTREAM", "127.0.0.1:50051"), "default upstream TCP address")
@@ -467,6 +621,10 @@ func main() {
 	key := flag.String("tls-key", os.Getenv("TLS_KEY"), "PEM key for HTTPS/WSS")
 	tlsUp := flag.Bool("upstream-tls", os.Getenv("UPSTREAM_TLS") == "true", "verify TLS and h2 ALPN upstream")
 	maxConns := flag.Int("max-connections", 256, "maximum concurrent tunnels")
+	maxPerPrincipal := flag.Int("max-connections-per-principal", envInt("MAX_CONNECTIONS_PER_PRINCIPAL", 8), "maximum concurrent tunnels for one principal")
+	maxGrant := flag.Duration("max-grant-lifetime", envDuration("MAX_ADMISSION_GRANT_LIFETIME", 15*time.Minute), "maximum accepted admission grant lifetime")
+	maxTunnel := flag.Duration("max-tunnel-lifetime", envDuration("MAX_TUNNEL_LIFETIME", time.Hour), "maximum lifetime of an established tunnel")
+	admissionURL := flag.String("admission-url", os.Getenv("ADMISSION_URL"), "fixed external admission service URL; mutually exclusive with TUNNEL_TOKEN")
 	healthcheck := flag.Bool("healthcheck", false, "check local HTTP readiness and exit")
 	flag.Parse()
 	if *healthcheck {
@@ -484,13 +642,24 @@ func main() {
 	if *maxConns < 1 {
 		log.Fatal("max-connections must be positive")
 	}
+	if *maxPerPrincipal < 1 || *maxGrant <= 0 || *maxGrant > 24*time.Hour || *maxTunnel <= 0 || *maxTunnel > 24*time.Hour {
+		log.Fatal("principal quota and admission/tunnel lifetimes are outside supported bounds")
+	}
 	token := os.Getenv("TUNNEL_TOKEN")
 	for _, r := range token {
 		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
 			log.Fatal("TUNNEL_TOKEN must be base64url-safe")
 		}
 	}
-	g := newGateway(config{upstream: *upstream, origin: *origin, token: token, maxConnections: *maxConns, upstreamTLS: *tlsUp, targetsFile: *targetsFile})
+	if *admissionURL != "" && token != "" {
+		log.Fatal("configure either ADMISSION_URL or TUNNEL_TOKEN, not both")
+	}
+	if *admissionURL != "" {
+		if err := validateAdmissionURL(*admissionURL); err != nil {
+			log.Fatal("invalid ADMISSION_URL")
+		}
+	}
+	g := newGateway(config{upstream: *upstream, origin: *origin, token: token, maxConnections: *maxConns, upstreamTLS: *tlsUp, targetsFile: *targetsFile, admissionURL: *admissionURL, maxPerPrincipal: *maxPerPrincipal, maxGrantLifetime: *maxGrant, maxTunnelLifetime: *maxTunnel})
 	mux := http.NewServeMux()
 	mux.Handle("/tunnel", g)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
