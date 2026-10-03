@@ -15,6 +15,16 @@ changes also run the Compose interoperability suite and the browser's checks.
 Use `gofmt` for Go. Keep generated code synchronized with `proto/demo.proto`.
 Include a focused regression test for a protocol bug and explain what changed.
 
+Every change to `main` must arrive through a pull request. The repository requires
+the `test` and `Test this bridge revision with reviewed Proto Contract` checks to
+pass against the latest `main`, requires resolved conversations and linear
+history, and does not allow administrator bypasses, force-pushes, or branch
+deletion. Use a squash or rebase merge rather than a merge commit. These rules
+serialize changes without requiring a second maintainer's approval: a stale pull
+request must be updated and revalidated before it can merge. The CI workflow also
+supports `merge_group`, so the same checks can be retained if a merge queue is
+enabled later.
+
 Preserve the [retry contract](web/RETRIES.md): transparent retries require positive
 transport evidence, and additional RPC retries require an explicit client policy.
 Do not replay committed calls or resume established streams after a disconnect.
