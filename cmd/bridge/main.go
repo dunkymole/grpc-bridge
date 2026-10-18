@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -65,9 +64,7 @@ func (g *gateway) destination(r *http.Request) (string, bool, int) {
 	if len(target) > 320 {
 		return "", false, 400
 	}
-	host, port, err := net.SplitHostPort(target)
-	p, portErr := strconv.Atoi(port)
-	if err != nil || portErr != nil || p < 1 || p > 65535 || host == "" || strings.ContainsAny(host, "/@?#\\ \t\r\n") {
+	if !validDestination(target) {
 		return "", false, 400
 	}
 	if target == g.upstream {
@@ -76,28 +73,11 @@ func (g *gateway) destination(r *http.Request) (string, bool, int) {
 	if g.targetsFile == "" {
 		return "", false, 403
 	}
-	file, err := os.Open(g.targetsFile)
+	policy, err := readTargetPolicy(g.targetsFile)
 	if err != nil {
 		return "", false, 503
 	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, 65537))
-	if err != nil || len(data) > 65536 {
-		return "", false, 503
-	}
-	var policy struct {
-		Targets map[string]targetPolicy `json:"targets"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&policy) != nil {
-		return "", false, 503
-	}
-	var extra any
-	if decoder.Decode(&extra) != io.EOF {
-		return "", false, 503
-	}
-	allowed, ok := policy.Targets[target]
+	allowed, ok := policy[target]
 	if !ok {
 		return "", false, 403
 	}
@@ -856,6 +836,9 @@ func env(name, fallback string) string {
 
 func envInt(name string, fallback int) int {
 	value := os.Getenv(name)
+	if overriddenEnvironment(name) {
+		return fallback
+	}
 	if value == "" {
 		return fallback
 	}
@@ -868,6 +851,9 @@ func envInt(name string, fallback int) int {
 
 func envDuration(name string, fallback time.Duration) time.Duration {
 	value := os.Getenv(name)
+	if overriddenEnvironment(name) {
+		return fallback
+	}
 	if value == "" {
 		return fallback
 	}
@@ -995,6 +981,8 @@ func shutdownOnSignal(g *gateway, server, healthServer *http.Server, signals <-c
 }
 
 func main() {
+	flag.CommandLine = flag.NewFlagSet("bridge", flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
 	listen := flag.String("listen", env("LISTEN", "127.0.0.1:8080"), "HTTP listen address")
 	healthListen := flag.String("health-listen", env("HEALTH_LISTEN", "127.0.0.1:8082"), "private HTTP listener for liveness/readiness probes")
 	upstream := flag.String("upstream", env("UPSTREAM", "127.0.0.1:50051"), "default upstream TCP address")
@@ -1011,7 +999,34 @@ func main() {
 	drainGrace := flag.Duration("drain-grace-period", envDuration("DRAIN_GRACE_PERIOD", 30*time.Second), "maximum time to drain existing tunnels after the first shutdown signal")
 	admissionURL := flag.String("admission-url", os.Getenv("ADMISSION_URL"), "fixed external admission service URL; mutually exclusive with TUNNEL_TOKEN")
 	healthcheck := flag.Bool("healthcheck", false, "check local HTTP readiness and exit")
-	flag.Parse()
+	checkConfig := flag.Bool("check-config", false, "validate configuration offline and exit")
+	diagnose := flag.Bool("diagnose", false, "check configured backend DNS, TCP, TLS and h2 ALPN and exit with JSON report")
+	diagnosticTarget := flag.String("diagnostic-target", "", "configured destination to diagnose; defaults to upstream")
+	diagnosticTimeout := flag.Duration("diagnostic-timeout", 5*time.Second, "overall connectivity diagnostic deadline, at most 1m")
+	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			flag.CommandLine.SetOutput(os.Stdout)
+			flag.PrintDefaults()
+			return
+		}
+		log.Fatal("invalid command-line flag or value; use -help for supported settings")
+	}
+	if flag.NArg() != 0 {
+		log.Fatal("unexpected positional arguments")
+	}
+	if *diagnose && (*checkConfig || *healthcheck) {
+		log.Fatal("diagnose, check-config, and healthcheck are mutually exclusive")
+	}
+	if !*diagnose {
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "diagnostic-target" || f.Name == "diagnostic-timeout" {
+				log.Fatal("diagnostic options require -diagnose")
+			}
+		})
+	}
+	if *checkConfig && *healthcheck {
+		log.Fatal("check-config and healthcheck are mutually exclusive")
+	}
 	if *healthcheck {
 		url, err := healthcheckURL(*healthListen)
 		if err != nil {
@@ -1050,6 +1065,16 @@ func main() {
 		if err := validateAdmissionURL(*admissionURL); err != nil {
 			log.Fatal("invalid ADMISSION_URL")
 		}
+	}
+	if err := validateOfflineSettings(*listen, *healthListen, *upstream, *origin, *targetsFile, *cert, *key); err != nil {
+		log.Fatal(err)
+	}
+	if *diagnose {
+		os.Exit(runConnectivityDiagnostic(os.Stdout, config{upstream: *upstream, upstreamTLS: *tlsUp, targetsFile: *targetsFile}, *diagnosticTarget, *diagnosticTimeout))
+	}
+	if *checkConfig {
+		fmt.Println("configuration valid")
+		return
 	}
 	g := newGateway(config{upstream: *upstream, origin: *origin, token: token, maxConnections: *maxConns, upstreamTLS: *tlsUp, targetsFile: *targetsFile, admissionURL: *admissionURL, maxPerPrincipal: *maxPerPrincipal, maxGrantLifetime: *maxGrant, maxTunnelLifetime: *maxTunnel})
 	mux := http.NewServeMux()

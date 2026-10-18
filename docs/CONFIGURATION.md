@@ -30,6 +30,7 @@ read at process startup; changing them requires restarting/recreating the bridge
 | `TLS_KEY`            | `-tls-key`         | empty                   | Corresponding PEM private key file. Required when a certificate is supplied.                                                                              |
 | `UPSTREAM_TLS`       | `-upstream-tls`    | `false`                 | Environment enables TLS only for literal `true`; verifies default backend certificate and requires `h2` ALPN.                                             |
 | `ASSETS`             | `-assets`          | `web/dist`              | Demo asset directory. Image sets `/web`.                                                                                                                  |
+| none                 | `-check-config`    | `false`                 | Validate effective configuration offline and exit; no listeners, DNS lookups, or backend/admission requests. |
 | none                 | `-healthcheck`     | `false`                 | Probe `http://HEALTH_LISTEN/readyz` with a two-second timeout and exit. Uses the configured private health listener, including when the public listener uses TLS. |
 | none                 | `-h`, `-help`      | n/a                     | Print Go flag help.                                                                                                                                       |
 
@@ -38,6 +39,80 @@ The stock Compose file passes only the environment variables shown in its
 environment entry or command flags to Compose. Merely adding an arbitrary name to
 `.env` does not pass it into the container. `TUNNEL_TOKEN` is explicitly interpolated
 from the shell or `.env`; the shell takes precedence.
+
+### Offline configuration validation
+
+Run the same binary with the same environment, flags, and mounted configuration
+files that startup will use:
+
+```sh
+bridge -check-config -targets-file=config/targets.json
+# Existing container (no shell required):
+docker compose exec bridge /bridge -check-config
+```
+
+Success prints `configuration valid` and exits 0; invalid settings exit nonzero.
+Flags override environment values, including malformed numeric/duration values
+that an explicit flag replaces. Unknown flags and positional arguments fail.
+`-check-config` and `-healthcheck` are mutually exclusive.
+
+The check shares startup validation for quotas, lifetimes, drain bounds,
+authentication conflicts, admission URL, listener/destination syntax, exact origin,
+and TLS certificate/key pairing and PEM loading. A configured target policy must
+be readable, at most 64 KiB, contain one JSON object with a `targets` map, and
+have valid destination keys and supported fields. Startup now checks the policy
+snapshot and TLS pair before opening listeners; subsequent policy reloads use the
+same policy parser. Validation errors omit configured values and file contents.
+
+The command runs in the scratch image without a shell or reachable backend.
+It does not check DNS, port availability, admission service availability, backend
+TLS/ALPN, certificate trust or expiry, or demo asset contents. A valid result is
+static configuration evidence; files and network conditions can change afterward.
+
+### Connectivity diagnostics
+
+Use `-diagnose` to check the default upstream, or select an exact configured target:
+
+```sh
+bridge -diagnose -diagnostic-timeout=5s
+bridge -diagnose -targets-file=config/targets.json -diagnostic-target=service.internal:443
+docker compose exec bridge /bridge -diagnose
+```
+
+This is an explicit network operation. It opens one connection to the selected
+backend and closes it after the checks; it opens no listeners, calls no admission
+service, and sends no credentials or RPC/application messages. The default
+upstream remains implicitly allowed; other destinations must occur in the target
+policy. TLS is selected by that policy or `-upstream-tls` for the default upstream,
+using the same minimum TLS 1.2, system trust, hostname verification, and `h2` ALPN
+requirements as relay connections. There is no insecure certificate bypass.
+
+`-diagnostic-timeout` is one overall DNS/TCP/TLS deadline, defaults to 5s, and
+must be positive and at most 1m. Resolved addresses are tried in order within the
+remaining budget. DNS is not repeated during dialing. Diagnostic options require
+`-diagnose`; this mode is mutually exclusive with `-check-config` and `-healthcheck`.
+Normal startup validation runs first.
+
+The diagnostic writes one JSON object to stdout, with `version: 1`, `ok`,
+`stage`, `message`, and `tls`. Reports contain fixed guidance, omitting destination
+addresses, certificate details, credentials, and raw peer/resolver errors.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | All applicable connectivity checks passed. |
+| 1 | Startup/flag validation or report output failed; validation errors go to stderr. |
+| 2 | Invalid diagnostic timeout or destination/policy selection. |
+| 3 | DNS failed or timed out. |
+| 4 | TCP connection failed or timed out. |
+| 5 | TLS handshake/certificate validation failed or timed out, including incompatible TLS/ALPN handshakes. |
+| 6 | TLS succeeded but the backend did not negotiate `h2`. |
+
+Plaintext destinations check DNS and TCP only: they have no certificate or ALPN.
+Success does not establish plaintext HTTP/2 support, service health, authorization,
+RPC correctness, or admission readiness. TLS failures intentionally group certificate,
+protocol, and timeout errors; check trust roots, hostname, certificate validity, TLS
+settings, and backend logs. Run from the deployment network and identity for useful
+results; the scratch image can execute this command directly without a shell.
 
 ### External admission and the reference verifier
 
