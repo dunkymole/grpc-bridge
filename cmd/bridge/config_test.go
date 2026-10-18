@@ -20,6 +20,10 @@ func TestOfflineSettings(t *testing.T) {
 		{"bad health", "localhost:8080", "localhost:0", "localhost:443", "https://example.com", "", ""},
 		{"bad upstream", "localhost:8080", "localhost:8082", "secret:99999", "https://example.com", "", ""},
 		{"bad origin", "localhost:8080", "localhost:8082", "localhost:443", "https://secret@example.com", "", ""},
+		{"origin empty hostname", "localhost:8080", "localhost:8082", "localhost:443", "https://:443", "", ""},
+		{"origin invalid port", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com:99999", "", ""},
+		{"origin zero port", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com:0", "", ""},
+		{"origin empty port", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com:", "", ""},
 		{"missing key", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com", "secret", ""},
 		{"missing files", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com", "secret", "secret"},
 	} {
@@ -68,6 +72,8 @@ func TestCheckConfigProcess(t *testing.T) {
 	}{
 		{[]string{}, true},
 		{[]string{"-healthcheck"}, false},
+		{[]string{"-origin=https://:443"}, false},
+		{[]string{"-origin=https://example.com:99999"}, false},
 		{[]string{"-max-connections=0"}, false},
 		{[]string{"-max-connections-per-principal=0"}, false},
 		{[]string{"-max-grant-lifetime=25h"}, false},

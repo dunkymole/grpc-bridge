@@ -88,8 +88,17 @@ func validateOfflineSettings(listen, health, upstream, origin, targets, cert, ke
 		return errors.New("upstream must be a destination host:port address")
 	}
 	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return errors.New("origin must be an exact HTTP or HTTPS origin without credentials, path, query, or fragment")
+	}
+	if strings.HasSuffix(parsed.Host, ":") {
+		return errors.New("origin must not contain an empty port")
+	}
+	if port := parsed.Port(); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return errors.New("origin port must be between 1 and 65535")
+		}
 	}
 	if targets != "" {
 		if _, err := readTargetPolicy(targets); err != nil {
