@@ -13,6 +13,7 @@ The [CI workflow](../.github/workflows/ci.yml) runs on pushes and pull requests:
 | `go test -race ./...` and `go vet ./...` in `examples/admission/` | Nested admission verifier module, which root module tests do not include. |
 | `docker compose up --build -d --wait` | Build the bridge and Python backend and wait for health checks. |
 | `npm run test:e2e && npm run example` in `web/` | All RPC shapes through the actual WebSocket relay, live routing changes, metadata, shared leases, recovery, and runnable examples. |
+| `npm run benchmark:smoke` in `web/` | Ramped tunnel/RPC load, all RPC shapes, large messages, slow consumption, cancellation, churn, and bounded post-load resource recovery. |
 | Pinned Playwright Compose project | Strict-contract browser clients in Chromium, Firefox, and WebKit. |
 | `scripts/run-autobahn.sh` | Pinned Autobahn subset with exact case-policy and report validation. |
 | `go test -race ./...` | Includes local-CA WSS/upstream ALPN and process trust checks, plus health/shutdown cases. |
