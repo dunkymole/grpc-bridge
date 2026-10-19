@@ -1,5 +1,23 @@
 # Load, resource, and recovery benchmarks
 
+## Mixed-RPC admission and shutdown lifecycle
+
+After starting Compose, run `npm run benchmark:lifecycle` from `web`, with the
+same `COMPOSE_PROJECT_NAME` used for the stack. This isolated test creates its
+own bridge/verifier/audited-backend containers on the Compose network and removes
+only those containers afterward. Existing stack containers are not signaled.
+
+All four RPC shapes run concurrently. It tests admission quota/outage rejection
+and short-grant expiry while a healthy sibling survives; graceful shutdown rejects
+new tunnels while existing calls finish; a 500 ms drain deadline cuts off long
+unary and response-committed server streams. A separate backend invocation log
+requires every expected call identifier exactly once, detecting loss or replay
+for the exercised calls. The low-level channel intentionally does not reconnect.
+Final JSON results/audit are retained at `test-results/load/lifecycle.json` and
+uploaded by CI. The normal Go lifecycle tests complement this with quota/global
+accounting cleanup and both-leg closure assertions. This bounded regression is
+not a prolonged lifecycle soak or a guarantee about application-configured retries.
+
 ## Admission regression under concurrent traffic
 
 `go test -race ./cmd/bridge -run TestAdmissionQuotaStorm -count=3` drives the
