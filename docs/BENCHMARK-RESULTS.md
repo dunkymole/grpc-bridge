@@ -33,19 +33,100 @@ retries, preserving the original failure and one committed invocation. Existing
 retry/commit-boundary tests remain enabled; application-configured retries are
 not a license to replay non-idempotent committed work.
 
-## Clean post-fix repeats: in progress
+## Clean post-fix repeats: October 19, 2026
 
-Two sequential two-hour repetitions are running from a clean detached checkout of
+Two sequential two-hour repetitions **passed** from a clean detached checkout of
 merged `b613e636d15a24cd4caaca7e84a979e3c9f3a331`, with identical resolved workload
 and fresh isolated containers between repetitions. Each uses 32 tunnels (eight
 idle), concurrency 1 / 16 / 64, a 900 KB message, 2,000 churn cycles and the existing
 recovery thresholds. The Windows/WSL host is an i9-8950HK with 12 logical CPUs,
 Docker Desktop 4.93.0, Engine 29.8.1, WSL kernel 6.18.54.1 and cgroup v2.
-The reports record exact image IDs, source, Node, CPU and host-memory identity.
+Both final reports record identical source, workload, thresholds, Node 24.19.0,
+CPU/host-memory identity and container image IDs. The host has 34,075,992,064
+bytes of RAM; Docker reports 16,631,246,848 bytes available. The bridge image is
+`sha256:15b5d2495bcc988c89ad8ff73a7ee559fdaa9440200595f66e9b305601c11900`;
+the backend is `sha256:e7287c04b5925b8a782b6362e216c1404f6574efb2d490b59352c9d40c3aa739`.
+The backend uses Python 3.12.14, grpcio 1.84.0 and protobuf 7.36.1. Container
+limits remain bridge 128 MiB / backend 512 MiB, with bridge `GOMEMLIMIT=48MiB`.
+The five-hour benchmark tunnel lifetime does not change production's one hour.
+The source remained clean and unchanged through both runs; the runner exited zero.
 
-There are **no final repeat results yet**. Issue #4 remains open until both
-reports, fixed-stage slopes/quartile means, recovery and repeat comparison have
-been inspected and published. A pre-fix repeat was deliberately stopped after
+| Measurement | Repetition 1 | Repetition 2 |
+| --- | ---: | ---: |
+| Start (UTC, October 19) | 06:46:44 | 08:47:39 |
+| Elapsed including cleanup (seconds) | 7,223.25 | 7,223.30 |
+| Successful operations | 4,252,126 | 4,238,611 |
+| Errors | 0 | 0 |
+| Operations / configured mixed-load second | 590.57 | 588.70 |
+| Aggregate p50 / p95 / p99 (ms) | 44 / 111 / 134 | 44 / 113 / 139 |
+| Unary / server-stream / client-stream / bidi counts | 1,063,033 / 1,063,044 / 1,063,022 / 1,063,027 | 1,059,655 / 1,059,661 / 1,059,646 / 1,059,649 |
+| Tunnels, baseline → recovered | 0 → 0 | 0 → 0 |
+| Goroutines, baseline → recovered | 6 → 6 | 6 → 6 |
+| Allocated heap bytes, baseline → recovered | 459,064 → 2,126,248 | 448,584 → 1,111,352 |
+| RSS bytes, baseline → recovered | 8,687,616 → 15,396,864 | 8,548,352 → 15,212,544 |
+| Cgroup socket bytes, baseline → recovered | 0 → 0 | 0 → 0 |
+| Cgroup kernel bytes, baseline → recovered | 573,440 → 1,622,016 | 524,288 → 1,568,768 |
+
+All configured thresholds passed without changes: zero errors, aggregate p99
+≤ 5 seconds, no remaining tunnels, and recovered growth ≤ 20 goroutines,
+8 MiB allocated heap and 16 MiB RSS. Kernel accounting did **not** return to
+baseline in either short recovery window and is not a gated recovery field.
+These are broad regression limits, not production SLOs. Throughput differed by
+0.32%; two repetitions do not establish statistical confidence or saturation.
+Counts include one separate large-message operation, but exclude ramp probes
+and churn RPCs; the denominator is configured mixed-load time, not total elapsed.
+
+Fixed-stage analysis discards the initial 10% of samples within
+each 40-minute concurrency stage. These are descriptive OLS slopes, not leak
+proof or an extrapolated capacity limit:
+
+| Run / workers | RSS slope (MiB/hour) | Heap slope (MiB/hour) | RSS first → last quartile mean (MiB) | Heap first → last quartile mean (MiB) |
+| --- | ---: | ---: | ---: | ---: |
+| 1 / 1 | +0.852 | +0.165 | 13.525 → 13.921 | 2.882 → 2.971 |
+| 1 / 16 | +0.491 | +0.048 | 14.511 → 14.734 | 3.033 → 3.055 |
+| 1 / 64 | +0.236 | +0.097 | 15.168 → 15.279 | 3.102 → 3.160 |
+| 2 / 1 | +0.993 | +0.185 | 13.345 → 13.777 | 2.866 → 2.968 |
+| 2 / 16 | +0.584 | +0.178 | 15.926 → 16.180 | 3.036 → 3.113 |
+| 2 / 64 | −0.572 | +0.111 | 16.329 → 16.125 | 3.117 → 3.165 |
+
+Goroutines remained exactly 102 in every retained fixed-stage sample (947–978
+samples over approximately 36 minutes per trimmed stage). Heap continued cycling
+with GC; RSS retained memory above baseline after disconnect. Run 2 had higher
+middle/final-stage RSS, but lower recovered heap/RSS than run 1. Positive heap
+slopes are retained, not rounded into zero growth; the negative final RSS slope
+in run 2 is not proof of permanent recovery. Longer deployment-specific windows
+are needed to distinguish allocator/GC behavior from any low-rate growth.
+
+| Run / workers | Mean / maximum sampled bridge CPU (%) | Peak sampled RSS / heap (MiB) | Peak sampled socket / kernel bytes |
+| --- | ---: | ---: | ---: |
+| 1 / 1 | 9.89 / 16.92 | 13.961 / 3.871 | 12,288 / 1,564,672 |
+| 1 / 16 | 104.41 / 117.72 | 15.273 / 4.060 | 65,536 / 1,613,824 |
+| 1 / 64 | 108.26 / 131.23 | 15.918 / 4.245 | 77,824 / 1,728,512 |
+| 2 / 1 | 9.86 / 16.17 | 13.832 / 3.876 | 8,192 / 1,560,576 |
+| 2 / 16 | 104.37 / 117.54 | 16.656 / 4.195 | 65,536 / 1,646,592 |
+| 2 / 64 | 107.82 / 160.58 | 16.676 / 4.257 | 77,824 / 1,691,648 |
+
+This table uses all active-stage samples, unlike the trimmed trend table. CPU
+means are arithmetic sample means; Docker's 100% is roughly one logical CPU,
+not the whole 12-thread host. Sparse samples can miss peaks. Socket/kernel
+accounting is not additive to RSS or to each other. This workload also includes
+the Node driver and Python demo backend, whose limits were not profiled as
+independent bottlenecks; observed operations/second is not a bridge capacity ceiling.
+
+The [clean evidence archive](https://github.com/dunkymole/grpc-bridge/releases/tag/benchmark-clean-evidence-2026-10-19)
+contains both final JSON/Markdown reports, all raw operations/resource JSONL,
+`soak-comparison.json`, host/runtime manifest, clean TLS output and a standalone
+post-run integrity checker. That checker verified all 8,490,737 operation records
+against every shape's counts/min/max/mean/percentiles, all 6,411 raw samples
+against the reports, identical source/environment/workload/thresholds, full
+stage duration and recovery gates. Its output is retained as `evidence-integrity.json`.
+The 72,339,423-byte ZIP has SHA-256
+`72505d4a93f7fa97aa14657999e9839fc8aee92caafbfde4fe5967b9fa2b6679`.
+The same prerelease separately retains the green post-fix CI artifacts; it is
+an evidence archive, not an npm/package release. The exact measured source also
+passed [tag CI](https://github.com/dunkymole/grpc-bridge/actions/runs/39219200694).
+
+A pre-fix repeat was deliberately stopped after
 about 15 minutes when the client bug was found; its partial data is retained as
 superseded evidence, not counted as a pass. The first older attempt that lost
 connections is likewise not a completed soak.
@@ -120,15 +201,21 @@ the separately recorded large-message operation.
 
 ### Supplemental TLS and kernel accounting (October 19)
 
-Three Linux/amd64 Go 1.27.1 repetitions on an Intel i9-8950HK compared 16 KiB
-verified echo round trips over warm plaintext versus WSS connections:
+Three clean-source Linux/amd64 Go 1.27.1 repetitions on an Intel i9-8950HK
+compared 16 KiB verified echo round trips over warm plaintext versus WSS
+connections. The source was `6479b57b8656b88f06f6f459d4bbf531c377b372`;
+its Go sources and module files are identical to the post-fix soak revision.
+The subsequent client fix changes TypeScript, not this Go fixture.
 
 | Mode | Round-trip range | Aggregate two-direction MB/s | Allocated bytes/op |
 | --- | ---: | ---: | ---: |
-| Plaintext | 66.740–74.109 µs | 442.16–490.98 | 16,432 |
-| WSS | 83.628–96.691 µs | 338.89–391.83 | 16,593–16,606 |
+| Plaintext | 60.948–63.394 µs | 516.90–537.64 | 16,432 |
+| WSS | 80.199–80.714 µs | 405.98–408.58 | 16,581–16,609 |
 
-Median round-trip time rose about 21% in this fixture. This is not a full TLS
+Median round-trip time rose about 31.5% (61.160 → 80.440 µs) in this fixture.
+Earlier exploratory measurements (66.740–74.109 µs plaintext,
+83.628–96.691 µs WSS) remain in the original evidence release; they are not
+pooled with these clean-source repetitions. This is not a full TLS
 capacity model: handshake, upstream TLS, application and real-network costs are
 excluded, and allocation totals include the test process. The reproducible
 benchmark is `BenchmarkTunnelTLSOverhead`; raw output is in the evidence release.
@@ -151,8 +238,8 @@ absence of all leaks, every socket-buffer bound or hardware-independent capacity
 Do not tighten CI thresholds or derive enterprise sizing from a single laptop.
 Sustained upstream-TLS/handshake churn, every browser engine's memory, production
 network topology, fleet behavior and application-specific retry policy require
-deployment-specific validation beyond this baseline. Clean repeat analysis and
-the final comparison remain pending.
+deployment-specific validation beyond this baseline. The clean repeated-soak
+comparison above completes this baseline, not those deployment-specific studies.
 
 An earlier run was incomplete after connections became unavailable. Laptop
 hibernation was suspected, and the one-hour default tunnel expiry was another
