@@ -1,5 +1,23 @@
 # Load, resource, and recovery benchmarks
 
+## Clean-source repeats and growth analysis
+
+From a clean checkout with Node 24+ dependencies installed, Windows operators can
+run `./scripts/run-clean-soaks.ps1 -NodeExecutable <path-to-node24>`. It performs
+two sequential two-hour repetitions in a dedicated `grpc-bridge-clean-*` Compose
+project, recreating the stack between runs, requiring clean source, preserving
+all artifacts and producing `test-results/load/soak-comparison.json`. It requests
+temporary system-awake state only while the runner is alive and restores that
+request in `finally`; no persistent power settings change. Explicit user sleep,
+shutdown or power loss can still interrupt the test.
+
+On any host, `npm run benchmark:analyze -- <report1.json> <report2.json>` computes
+OLS slopes per hour, first/last quartile means and ranges for each fixed-concurrency
+stage separately, excluding the first 10% of samples in each stage. Ramp jumps
+are not confused with within-stage growth. Slopes describe observations; allocator
+retention and GC require interpretation, not automatic leak claims. Compare
+source/image/host/configuration identity and recovery alongside repeated trends.
+
 ## Non-consuming reader/writer regression
 
 Run `npm run benchmark:backpressure` from `web` after starting Compose with the
