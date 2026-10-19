@@ -65,11 +65,16 @@ export function createTunnelTransport(
       signal?.removeEventListener("abort", onAbort);
     };
     const iterator = input[Symbol.asyncIterator]();
+    let inputCanceled = false;
     const body = new ReadableStream<Uint8Array>(
       {
         async pull(controller) {
           try {
             const next = await iterator.next();
+            // Cancellation can happen while an async producer is parked. A late
+            // result must not touch its terminal controller or replace the
+            // original connection/cancellation/deadline error.
+            if (inputCanceled || abort.signal.aborted) return;
             if (next.done) {
               controller.close();
               return;
@@ -78,11 +83,13 @@ export function createTunnelTransport(
               frame(toBinary(method.input, create(method.input, next.value))),
             );
           } catch (error) {
+            if (inputCanceled || abort.signal.aborted) return;
             controller.error(error);
             abort.abort(error);
           }
         },
         cancel() {
+          inputCanceled = true;
           void iterator.return?.().catch(() => {});
         },
       },
