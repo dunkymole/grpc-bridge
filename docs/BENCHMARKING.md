@@ -18,6 +18,22 @@ are not confused with within-stage growth. Slopes describe observations; allocat
 retention and GC require interpretation, not automatic leak claims. Compare
 source/image/host/configuration identity and recovery alongside repeated trends.
 
+## Non-consuming reader/writer regression
+
+Run `npm run benchmark:backpressure` from `web` after starting Compose with the
+same project name. The reader case offers four 900 KB gRPC Chat messages, never
+reads the response body, and verifies bridge-to-client bytes fill and then stall
+at the channel's configured 65,535-byte per-stream window (with bounded framing
+overhead). A separate HTTP/2 peer never reads request DATA and advertises a 16 KiB
+stream window; the writer case verifies producer advancement stalls with at most
+128 KiB pulled ahead. Both check a healthy sibling before and after cancel/reset,
+then verify tunnel/goroutine/heap recovery. Dedicated containers are cleaned up;
+JSON evidence is retained at `test-results/load/backpressure.json` in CI.
+
+These bounded scenarios complement synthetic protocol over-credit/queue-limit
+tests; they do not claim to exhaust every operating-system socket buffer or prove
+long-term leak freedom.
+
 ## Browser process resource sampling
 
 The Chromium/Linux browser gate includes `browser-tests/resources.spec.ts`:
