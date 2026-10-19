@@ -1,5 +1,21 @@
 # Load, resource, and recovery benchmarks
 
+## Non-consuming reader/writer regression
+
+Run `npm run benchmark:backpressure` from `web` after starting Compose with the
+same project name. The reader case offers four 900 KB gRPC Chat messages, never
+reads the response body, and verifies bridge-to-client bytes fill and then stall
+at the channel's configured 65,535-byte per-stream window (with bounded framing
+overhead). A separate HTTP/2 peer never reads request DATA and advertises a 16 KiB
+stream window; the writer case verifies producer advancement stalls with at most
+128 KiB pulled ahead. Both check a healthy sibling before and after cancel/reset,
+then verify tunnel/goroutine/heap recovery. Dedicated containers are cleaned up;
+JSON evidence is retained at `test-results/load/backpressure.json` in CI.
+
+These bounded scenarios complement synthetic protocol over-credit/queue-limit
+tests; they do not claim to exhaust every operating-system socket buffer or prove
+long-term leak freedom.
+
 ## Admission regression under concurrent traffic
 
 `go test -race ./cmd/bridge -run TestAdmissionQuotaStorm -count=3` drives the
