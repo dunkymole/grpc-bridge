@@ -1,5 +1,28 @@
 # Four-hour soak: October 18–19, 2026
 
+## Supplemental Chromium measurement (October 19)
+
+Chromium 153.0.8010.12 on Linux in the pinned Playwright container passed five
+mixed-RPC interoperability iterations, then disconnected. Actual browser-process
+RSS and cumulative CPU seconds were sampled via CDP plus `/proc`, separately
+from page JS heap and the Node test driver.
+
+| Sample | Page JS heap | Sum of reported process RSS | Cumulative process CPU |
+| --- | ---: | ---: | ---: |
+| Connected baseline | 3.24 MiB | 370.30 MiB | 0.74 s |
+| After five iterations | 7.66 MiB | 406.27 MiB | 2.34 s |
+| One second after disconnect | 8.02 MiB | 408.10 MiB | 2.48 s |
+
+Elapsed baseline-to-final sampling time was 2.53 seconds; cumulative CPU increased
+1.74 seconds. RSS totals double-count shared mappings and are not unique memory.
+GC was not forced, and neither heap nor RSS returned to baseline in this short
+observation. This is honest cost evidence, not a leak assertion or recovery gate.
+It measures Chromium only, not Firefox/WebKit resource usage. Raw JSON is retained
+with the [evidence release](https://github.com/dunkymole/grpc-bridge/releases/tag/benchmark-evidence-2026-10-19)
+and future CI browser artifacts.
+
+## Original soak
+
 Result: **PASS** for this workload and host, not a production capacity guarantee.
 
 ## Workload and environment
