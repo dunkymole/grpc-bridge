@@ -131,26 +131,28 @@ about 15 minutes when the client bug was found; its partial data is retained as
 superseded evidence, not counted as a pass. The first older attempt that lost
 connections is likewise not a completed soak.
 
-## Supplemental Chromium measurement (October 19)
+## Post-fix CI Chromium measurement (October 19)
 
-Chromium 153.0.8010.12 on Linux in the pinned Playwright container passed five
+In archived CI run 39211048798 (the source tree identified above), Chromium
+153.0.8010.12 on Linux in the pinned Playwright container passed five
 mixed-RPC interoperability iterations, then disconnected. Actual browser-process
 RSS and cumulative CPU seconds were sampled via CDP plus `/proc`, separately
 from page JS heap and the Node test driver.
 
 | Sample | Page JS heap | Sum of reported process RSS | Cumulative process CPU |
 | --- | ---: | ---: | ---: |
-| Connected baseline | 3.24 MiB | 370.30 MiB | 0.74 s |
-| After five iterations | 7.66 MiB | 406.27 MiB | 2.34 s |
-| One second after disconnect | 8.02 MiB | 408.10 MiB | 2.48 s |
+| Connected baseline | 3.34 MiB | 397.33 MiB | 1.07 s |
+| After five iterations | 7.78 MiB | 434.79 MiB | 2.22 s |
+| One second after disconnect | 8.14 MiB | 435.60 MiB | 2.25 s |
 
-Elapsed baseline-to-final sampling time was 2.53 seconds; cumulative CPU increased
-1.74 seconds. RSS totals double-count shared mappings and are not unique memory.
+Elapsed baseline-to-final sampling time was 2.60 seconds; cumulative CPU increased
+1.18 seconds. RSS totals double-count shared mappings and are not unique memory.
 GC was not forced, and neither heap nor RSS returned to baseline in this short
 observation. This is honest cost evidence, not a leak assertion or recovery gate.
 It measures Chromium only, not Firefox/WebKit resource usage. Raw JSON is retained
-with the [evidence release](https://github.com/dunkymole/grpc-bridge/releases/tag/benchmark-evidence-2026-10-19)
-and future CI browser artifacts.
+in the CI ZIP on the [post-fix evidence release](https://github.com/dunkymole/grpc-bridge/releases/tag/benchmark-clean-evidence-2026-10-19).
+Earlier local supplemental measurements remain in the original evidence release;
+they are not pooled with this versioned CI sample.
 
 ## Original four-hour soak: October 18–19, 2026
 
