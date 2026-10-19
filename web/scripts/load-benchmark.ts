@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from "node:child_process";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
-import { cpus, platform, release } from "node:os";
+import { arch, cpus, platform, release, totalmem } from "node:os";
 import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
@@ -34,6 +34,8 @@ interface Profile {
 }
 
 interface ResourceSample extends RecoverySnapshot {
+  cgroupSocketBytes?: number;
+  cgroupKernelBytes?: number;
   label: string;
   elapsedSeconds: number;
   heapInuseBytes: number;
@@ -234,11 +236,15 @@ function requiredMetric(values: Map<string, number>, name: string): number {
 }
 
 async function containerResource(): Promise<{
+  cgroupSocketBytes?: number;
+  cgroupKernelBytes?: number;
   rssBytes?: number;
   processThreads?: number;
   containerCPUPercent?: number;
 }> {
   const resource: {
+    cgroupSocketBytes?: number;
+    cgroupKernelBytes?: number;
     rssBytes?: number;
     processThreads?: number;
     containerCPUPercent?: number;
@@ -257,8 +263,15 @@ async function containerResource(): Promise<{
     rssDiagnostic = "docker compose did not return a backend helper image";
     return resource;
   }
-  const program =
-    "import json; s={x.split(':',1)[0]:x.split(':',1)[1].strip() for x in open('/proc/1/status') if ':' in x}; print(json.dumps({'rssBytes':int(s['VmRSS'].split()[0])*1024,'processThreads':int(s['Threads'])}))";
+  const program = `import json
+s={x.split(':',1)[0]:x.split(':',1)[1].strip() for x in open('/proc/1/status') if ':' in x}
+r={'rssBytes':int(s['VmRSS'].split()[0])*1024,'processThreads':int(s['Threads'])}
+try:
+    c=dict(line.split() for line in open('/proc/1/root/sys/fs/cgroup/memory.stat'))
+    if 'sock' in c: r['cgroupSocketBytes']=int(c['sock'])
+    if 'kernel' in c: r['cgroupKernelBytes']=int(c['kernel'])
+except OSError: pass
+print(json.dumps(r))`;
   const [stats, output] = await Promise.all([
     commandAsync("docker", [
       "stats",
@@ -665,6 +678,11 @@ interface BenchmarkResult {
     node: string;
     os: string;
     cpuCount: number;
+    cpuModel: string;
+    architecture: string;
+    hostMemoryBytes: number;
+    bridgeImage: string;
+    backendImage: string;
     docker: string;
   };
   config: Profile;
@@ -683,6 +701,11 @@ interface BenchmarkResult {
 }
 
 async function main(): Promise<void> {
+  const gitRevision = command("git", ["rev-parse", "HEAD"]);
+  const gitStatus = command("git", ["status", "--short"]);
+  if (process.env.BENCH_REQUIRE_CLEAN === "1" && gitStatus !== "") {
+    throw new Error("BENCH_REQUIRE_CLEAN requires a clean source checkout");
+  }
   console.log(`Starting ${profileName} profile with ${config.tunnels} tunnels`);
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(samplePath, "");
@@ -797,11 +820,21 @@ async function main(): Promise<void> {
     startedAt: startedAt.toISOString(),
     elapsedSeconds,
     environment: {
-      gitRevision: command("git", ["rev-parse", "HEAD"]),
-      gitStatus: command("git", ["status", "--short"]),
+      gitRevision,
+      gitStatus,
       node: process.version,
       os: `${platform()} ${release()}`,
       cpuCount: cpus().length,
+      cpuModel: cpus()[0]?.model ?? "unavailable",
+      architecture: arch(),
+      hostMemoryBytes: totalmem(),
+      bridgeImage: command("docker", [
+        "inspect",
+        "--format",
+        "{{.Image}}",
+        bridgeContainer,
+      ]),
+      backendImage: helperImage,
       docker: command("docker", ["version", "--format", "{{.Server.Version}}"]),
     },
     config,

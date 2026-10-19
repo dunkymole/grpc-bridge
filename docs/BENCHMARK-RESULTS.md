@@ -45,6 +45,26 @@ the separately recorded large-message operation.
 
 ## Evidence and limitations
 
+### Supplemental TLS and kernel accounting (October 19)
+
+Three Linux/amd64 Go 1.27.1 repetitions on an Intel i9-8950HK compared 16 KiB
+verified echo round trips over warm plaintext versus WSS connections:
+
+| Mode | Round-trip range | Aggregate two-direction MB/s | Allocated bytes/op |
+| --- | ---: | ---: | ---: |
+| Plaintext | 66.740–74.109 µs | 442.16–490.98 | 16,432 |
+| WSS | 83.628–96.691 µs | 338.89–391.83 | 16,593–16,606 |
+
+Median round-trip time rose about 21% in this fixture. This is not a full TLS
+capacity model: handshake, upstream TLS, application and real-network costs are
+excluded, and allocation totals include the test process. The reproducible
+benchmark is `BenchmarkTunnelTLSOverhead`; raw output is in the evidence release.
+
+A kernel-aware smoke run (1,477 operations, zero errors, p99 41 ms) separately
+sampled bridge cgroup v2 accounting: socket memory was 0–4 KiB and kernel memory
+897,024–929,792 bytes, recovering to 0 and 905,216 bytes. These sparse container
+samples can miss peaks; they are not per-connection budgets or additive RSS.
+
 [Download the compressed reports and raw JSONL evidence](https://github.com/dunkymole/grpc-bridge/releases/tag/benchmark-evidence-2026-10-19).
 The bundle contains the final JSON and Markdown reports, raw operation durations,
 and resource time series. Large artifacts are excluded from source packages and
