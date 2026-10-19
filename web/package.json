@@ -62,6 +62,7 @@
     "test:browser": "playwright test -c playwright.config.ts",
     "benchmark": "tsx scripts/load-benchmark.ts",
     "benchmark:smoke": "tsx scripts/load-benchmark.ts smoke",
+    "benchmark:lifecycle": "tsx scripts/lifecycle-benchmark.ts",
     "example": "tsx examples/run.ts",
     "size": "npm run build:package && node scripts/measure-package.mjs",
     "prepack": "npm run build:package"
