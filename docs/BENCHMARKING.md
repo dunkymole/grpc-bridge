@@ -77,8 +77,9 @@ It verifies denied attempts never dial the backend, grant expiry closes the
 affected tunnel, its quota can be reused, a separate principal still exchanges
 data after expiry, and principal/tunnel accounting recovers after disconnect.
 This is a bounded opaque-byte relay regression, not a mixed-RPC capacity test.
-The regular Go CI test step includes it. Mixed-RPC retry safety and
-drain/forced-close workloads still need separate coverage before completing #4.
+The regular Go CI test step includes it. The mixed-RPC lifecycle gate above
+complements these opaque relay tests with committed calls and a backend replay
+audit; it does not turn them into a prolonged lifecycle capacity test.
 
 `go test -race ./cmd/bridge -run 'TestAdmissionOutageDuringEstablishedTraffic|TestTunnelLifetimeExpiresDuringContinuousTraffic' -count=3`
 adds eight concurrent verifier-failure requests (503 and request timeout) alongside
@@ -88,7 +89,7 @@ The lifetime case keeps exchanging data until the configured 500 ms maximum
 closes each tunnel, repeats three connection cycles, and verifies accounting
 recovery. These are bounded relay regressions, not prolonged mixed-RPC tests.
 
-See the [October 2026 four-hour soak results](BENCHMARK-RESULTS.md) for retained
+See the [benchmark evidence and limitations report](BENCHMARK-RESULTS.md) for retained
 evidence, environment, provenance and limitations.
 
 The benchmark drives the real Compose bridge and Python backend through the
