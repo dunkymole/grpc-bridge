@@ -1,5 +1,18 @@
 # Load, resource, and recovery benchmarks
 
+## Admission regression under concurrent traffic
+
+`go test -race ./cmd/bridge -run TestAdmissionQuotaStorm -count=3` drives the
+real WebSocket upgrade/relay path with eight concurrent handshake workers
+(64 quota/authorization denials) alongside 100 verified sibling echo frames.
+It verifies denied attempts never dial the backend, grant expiry closes the
+affected tunnel, its quota can be reused, a separate principal still exchanges
+data after expiry, and principal/tunnel accounting recovers after disconnect.
+This is a bounded opaque-byte relay regression, not a mixed-RPC capacity test.
+The regular Go CI test step includes it. Admission outage, tunnel-lifetime expiry,
+mixed-RPC retry safety and drain/forced-close workloads still need separate
+coverage before completing issue #4.
+
 See the [October 2026 four-hour soak results](BENCHMARK-RESULTS.md) for retained
 evidence, environment, provenance and limitations.
 
