@@ -57,7 +57,10 @@ only those containers afterward. Existing stack containers are not signaled.
 All four RPC shapes run concurrently. It tests admission quota/outage rejection
 and short-grant expiry while a healthy sibling survives; graceful shutdown rejects
 new tunnels while existing calls finish; a 500 ms drain deadline cuts off long
-unary and response-committed server streams. A separate backend invocation log
+unary and response-committed server streams. The forced case keeps Collect/Chat
+producers held until exit, requires `Unavailable` for all four in-flight shapes,
+and bounds signal-to-exit to two seconds for the 500 ms grace (including Docker
+CLI/scheduler overhead). A separate backend invocation log
 requires every expected call identifier exactly once, detecting loss or replay
 for the exercised calls. The low-level channel intentionally does not reconnect.
 Final JSON results/audit are retained at `test-results/load/lifecycle.json` and

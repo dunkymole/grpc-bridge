@@ -154,6 +154,7 @@ async function main() {
       );
     }
     const channels = [];
+    let drainElapsedMs: number | undefined;
     try {
       const channel = await openChannel(
         url,
@@ -251,25 +252,53 @@ async function main() {
           "sibling-after-expiry",
         );
       } else {
+        const signaledAt = Date.now();
         await docker("kill", "--signal", "TERM", bridge);
-        await until(async () => (await fetch(`${base}/readyz`)).status === 503);
+        await until(async () => {
+          try {
+            return (await fetch(`${base}/readyz`)).status === 503;
+          } catch {
+            return (
+              scenario === "forced" &&
+              (await docker("inspect", "-f", "{{.State.Running}}", bridge)) ===
+                "false"
+            );
+          }
+        });
         await assert.rejects(openChannel(url));
+        if (scenario === "forced") {
+          // Keep Collect/Chat producers held, so all four shapes are still in
+          // flight at forced close rather than quietly completing during grace.
+          await until(
+            async () =>
+              (await docker("inspect", "-f", "{{.State.Running}}", bridge)) ===
+              "false",
+            2_000,
+          );
+          drainElapsedMs = Date.now() - signaledAt;
+          assert(
+            drainElapsedMs < 2_000,
+            `500 ms drain deadline exceeded scheduling tolerance: ${drainElapsedMs} ms`,
+          );
+        }
       }
       release();
       const outcomes = await settled;
       if (scenario === "forced") {
         for (const result of outcomes) {
-          // Collect may finish within grace after release. Echo and Count must fail.
-          if (result.status === "rejected")
+          assert.equal(
+            result.status,
+            "rejected",
+            "forced shutdown completed an in-flight call",
+          );
+          if (result.status === "rejected") {
             assert(result.reason instanceof ConnectError);
+            assert.equal(result.reason.code, Code.Unavailable);
+          }
         }
         assert.equal(outcomes[0]?.status, "rejected");
         assert.equal(outcomes[1]?.status, "rejected");
-        try {
-          while (!(await chat.next()).done) {}
-        } catch (error) {
-          assert(error instanceof ConnectError);
-        }
+        await unavailable(chat.next());
       } else {
         for (const result of outcomes)
           assert.equal(result.status, "fulfilled", JSON.stringify(result));
@@ -300,6 +329,7 @@ async function main() {
       results.push({
         scenario,
         elapsedMs: Date.now() - started,
+        drainElapsedMs,
         result: "PASS",
       });
       console.log(`PASS ${scenario}`);
