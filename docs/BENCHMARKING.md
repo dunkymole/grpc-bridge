@@ -1,5 +1,18 @@
 # Load, resource, and recovery benchmarks
 
+## Browser process resource sampling
+
+The Chromium/Linux browser gate includes `browser-tests/resources.spec.ts`:
+five repetitions of all four RPC shapes, concurrent calls, a large message,
+cancellation and deadlines, followed by disconnect. CDP supplies OS process IDs
+and cumulative CPU seconds; `/proc/<pid>/status` supplies actual browser/renderer,
+GPU and network-service RSS. Page JS heap is sampled separately. This never
+substitutes Node test-driver memory for browser memory. JSON is saved to
+`test-results/load/browser-resources.json` and attached to the Playwright result.
+Other engines are explicitly skipped for this measurement only; their interop
+tests remain enabled. Summed RSS includes shared mappings, not unique memory.
+Normal GC is not forced and one-second recovery does not prove leak freedom.
+
 ## Admission regression under concurrent traffic
 
 `go test -race ./cmd/bridge -run TestAdmissionQuotaStorm -count=3` drives the
