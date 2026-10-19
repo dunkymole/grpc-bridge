@@ -43,6 +43,8 @@ jobs:
         working-directory: web
       - run: npm run benchmark:smoke
         working-directory: web
+      - run: npm run benchmark:backpressure
+        working-directory: web
       - run: npm run benchmark:lifecycle
         working-directory: web
       - run: docker compose up -d --force-recreate --wait bridge
