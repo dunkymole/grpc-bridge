@@ -153,6 +153,23 @@ kernel socket memory; container limits remain the hard deployment bound. Browser
 engine memory is outside this Node-driven workload and should be measured by a
 separate browser-process harness before making browser capacity claims.
 
+Where cgroup v2 is available, samples also include `cgroupSocketBytes` (`sock`)
+and `cgroupKernelBytes` (`kernel`) from the bridge process's own cgroup filesystem
+through `/proc/1/root/sys/fs/cgroup/memory.stat`. Missing support is omitted, not
+invented as zero. These are container-level accounting, not per-RPC costs, and
+must not be blindly added to RSS (or to one another). Sampling can miss short
+peaks. Environment records include CPU model/architecture, host memory, exact
+container image IDs and source revision/status captured before load starts.
+Set `BENCH_REQUIRE_CLEAN=1` for publishable clean-source runs; a dirty checkout
+is rejected before artifacts are opened.
+
+Run `go test ./cmd/bridge -run '^$' -bench BenchmarkTunnelTLSOverhead -benchtime=1s -count=3`
+to compare fixed 16 KiB warm-connection relay round trips over plaintext and WSS.
+Certificate verification remains enabled. Reported MB/s counts both directions;
+allocation counts cover the in-process test fixture. TLS handshakes, upstream TLS,
+HTTP/2/gRPC processing, browser work and real network latency are excluded. This
+microbenchmark describes one cost component, not a production throughput score.
+
 Clean up from the repository root:
 
 ```sh
