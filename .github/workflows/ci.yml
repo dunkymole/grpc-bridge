@@ -41,6 +41,8 @@ jobs:
       - run: docker compose up --build -d --wait
       - run: npm run test:e2e && npm run example
         working-directory: web
+      - run: npm run benchmark:smoke
+        working-directory: web
       - run: docker compose up -d --force-recreate --wait bridge
         env:
           TUNNEL_TOKEN: local-ci-test-token

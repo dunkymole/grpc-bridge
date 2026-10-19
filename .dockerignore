@@ -6,4 +6,5 @@
 bin
 .env
 test-results
+**/test-results
 *.tgz

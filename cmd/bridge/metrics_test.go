@@ -62,6 +62,9 @@ func TestFailedDialAndRejectionMetrics(t *testing.T) {
 		"bridge_connection_failures_total{reason=\"auth\"} 1\n",
 		"bridge_backend_dial_duration_seconds_count 1\n",
 		"bridge_backend_dial_duration_seconds_bucket{le=\"+Inf\"} 1\n",
+		"bridge_process_goroutines ",
+		"bridge_process_heap_alloc_bytes ",
+		"bridge_process_heap_inuse_bytes ",
 	} {
 		if !strings.Contains(metrics.Body.String(), line) {
 			t.Errorf("missing %s", line)

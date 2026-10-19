@@ -10,6 +10,9 @@ when the bridge restarts. All series, including zero-valued failures, are emitte
 | `bridge_established_tunnels` | Gauge | Open tunnels whose WebSocket upgrade response has been flushed. |
 | `bridge_tunnel_capacity` | Gauge | Configured maximum admission slots (`-max-connections`). |
 | `bridge_draining` | Gauge | 1 after the first shutdown signal; new tunnel admissions are rejected. |
+| `bridge_process_goroutines` | Gauge | Current goroutines in the bridge process. |
+| `bridge_process_heap_alloc_bytes` | Gauge | Bytes occupied by live and not-yet-collected heap objects. |
+| `bridge_process_heap_inuse_bytes` | Gauge | Bytes in heap spans currently marked in use. |
 | `bridge_drain_graceful_completions_total` | Counter | Drains completed after tunnels and handshakes ended before the grace deadline. |
 | `bridge_drain_forced_closures_total` | Counter | Active tunnels closed at the grace deadline or after a second signal. |
 | `bridge_drain_forced_shutdowns_total` | Counter | Shutdowns forced by a second signal or an expired drain grace period. |
@@ -55,6 +58,12 @@ Counters use atomics; the histogram uses a short lock per completed dial and
 snapshot. Scraping does not hold a metrics lock while writing the HTTP response.
 Individual counters are sampled independently, so concurrent activity can cause
 small temporary differences between related values in one scrape.
+
+Process gauges are sampled when `/metrics` is requested. Reading Go memory
+statistics briefly coordinates with the runtime, so scrape at monitoring cadence,
+not per request. Heap gauges exclude stacks, executable mappings, socket buffers,
+and other process or kernel memory; use container and resident-memory measurements
+for capacity work.
 
 Labels never contain destinations, tokens, users, or client addresses. Metric
 storage remains bounded as the number of connections and targets grows.

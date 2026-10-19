@@ -60,6 +60,8 @@
     "test:e2e": "tsx --test test/*.e2e.ts",
     "contracts:verify": "node scripts/verify-contract-fixture.mjs",
     "test:browser": "playwright test -c playwright.config.ts",
+    "benchmark": "tsx scripts/load-benchmark.ts",
+    "benchmark:smoke": "tsx scripts/load-benchmark.ts smoke",
     "example": "tsx examples/run.ts",
     "size": "npm run build:package && node scripts/measure-package.mjs",
     "prepack": "npm run build:package"

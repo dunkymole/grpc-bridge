@@ -9,6 +9,7 @@ services:
       TARGETS_FILE: /config/targets.json
       ALLOWED_ORIGIN: ${BRIDGE_ORIGIN:-http://localhost:8080}
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+      MAX_CONNECTIONS_PER_PRINCIPAL: ${MAX_CONNECTIONS_PER_PRINCIPAL:-8}
       GOMEMLIMIT: 48MiB
     volumes:
       - ./config:/config:ro

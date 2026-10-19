@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
@@ -87,6 +88,14 @@ func (g *gateway) serveMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "bridge_tunnel_capacity %d\n", cap(g.slots))
 	header("bridge_draining", "Whether the process has entered tunnel drain and will reject new tunnels.", "gauge")
 	fmt.Fprintf(w, "bridge_draining %d\n", m.draining.Load())
+	header("bridge_process_goroutines", "Current number of goroutines in the bridge process.", "gauge")
+	fmt.Fprintf(w, "bridge_process_goroutines %d\n", runtime.NumGoroutine())
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	header("bridge_process_heap_alloc_bytes", "Bytes of allocated heap objects in the bridge process.", "gauge")
+	fmt.Fprintf(w, "bridge_process_heap_alloc_bytes %d\n", memory.HeapAlloc)
+	header("bridge_process_heap_inuse_bytes", "Bytes in in-use heap spans in the bridge process.", "gauge")
+	fmt.Fprintf(w, "bridge_process_heap_inuse_bytes %d\n", memory.HeapInuse)
 	for _, item := range []struct {
 		name, help string
 		value      uint64
