@@ -278,7 +278,7 @@ The reusable example offers the same choice:
 const { client, close } = await connectDemo(
   bridgeUrl,
   token,
-  "python-demo:50051",
+  "demo",
   { forwardToken: true },
 );
 ```
