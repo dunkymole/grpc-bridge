@@ -2,6 +2,7 @@
 **/node_modules
 **/dist
 **/package-dist
+**/package-sources
 **/__pycache__
 bin
 .env

@@ -16,6 +16,21 @@ Protobuf-ES 2.15:
 npm install /path/to/dunkymole-grpc-bridge-0.2.0.tgz @connectrpc/connect@2.2.0 @bufbuild/protobuf@2.15.0
 ```
 
+### Inspect a local release artifact
+
+Run `npm run package:verify` from `web/` with Node 24+, npm and `tar` available.
+This builds and packs the real artifact, then checks its archive contents,
+public export targets, declarations, maps, physically shipped library sources
+and license notices. Demo contracts, generated demo descriptors, tests, build
+scripts, dependencies and local credentials are excluded. Only sources referenced
+by emitted maps are staged in `package-sources/`, so declaration navigation does
+not point outside the installed package.
+
+The audited tarball and `package-audit.json` (file inventory, size, SHA-256 and
+npm SHA-512 integrity) are retained in `test-results/package/` and CI artifacts.
+This command **does not publish**; registry ownership, version/tag approval and
+verification through a clean installed consumer remain separate release gates.
+
 Generate Protobuf-ES descriptors and a contract artifact from the same locked
 descriptor input with `proto-contract`. The generator validates the complete
 lock against that exact input, then emits the runtime graph described in
@@ -196,5 +211,6 @@ The default Compose deployment is local-only. Before exposing it beyond loopback
 configure TLS, exact allowed origins, authentication, upstream network
 restrictions, and deployment resource limits. Contract metadata does not
 authorize methods or authenticate the outer WebSocket; enforce application
-authorization in the gRPC service. See [configuration](../docs/CONFIGURATION.md)
-and [SECURITY](../SECURITY.md).
+authorization in the gRPC service. See
+[configuration](https://github.com/dunkymole/grpc-bridge/blob/main/docs/CONFIGURATION.md)
+and [SECURITY](https://github.com/dunkymole/grpc-bridge/blob/main/SECURITY.md).
