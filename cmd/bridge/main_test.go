@@ -253,6 +253,16 @@ func request() *http.Request {
 	r.Header.Set("Sec-WebSocket-Protocol", protocol)
 	return r
 }
+
+func testTargetsFile(t testing.TB, address string, secure bool) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "targets.json")
+	data := fmt.Sprintf(`{"targets":{"demo":{"address":%q,"tls":%t}}}`, address, secure)
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 func TestHandshakeGuards(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -266,7 +276,7 @@ func TestHandshakeGuards(t *testing.T) {
 		{"profile", func(r *http.Request) { r.Header.Set("Sec-WebSocket-Protocol", "auth.secret, grpc-tunnel.v2") }, 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := newGateway(config{upstream: "127.0.0.1:1", origin: "http://localhost", token: "secret", maxConnections: 1})
+			g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, "127.0.0.1:1", false), origin: "http://localhost", token: "secret", maxConnections: 1})
 			r := request()
 			tc.mutate(r)
 			w := httptest.NewRecorder()
@@ -276,7 +286,7 @@ func TestHandshakeGuards(t *testing.T) {
 			}
 		})
 	}
-	g := newGateway(config{upstream: "127.0.0.1:1", maxConnections: 1})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, "127.0.0.1:1", false), maxConnections: 1})
 	g.slots <- struct{}{}
 	w := httptest.NewRecorder()
 	g.ServeHTTP(w, request())
@@ -299,10 +309,10 @@ func TestActualUpgradeAndOpaqueRelay(t *testing.T) {
 		io.Copy(c, c)
 	}()
 	policy := filepath.Join(t.TempDir(), "targets.json")
-	if e := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{%q:{"tls":false}}}`, listener.Addr().String())), 0600); e != nil {
+	if e := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{"echo":{"address":%q,"tls":false}}}`, listener.Addr().String())), 0600); e != nil {
 		t.Fatal(e)
 	}
-	g := newGateway(config{upstream: "127.0.0.1:1", targetsFile: policy, maxConnections: 1})
+	g := newGateway(config{defaultTarget: "echo", targetsFile: policy, maxConnections: 1})
 	defer g.stop()
 	server := httptest.NewServer(g)
 	defer server.Close()
@@ -312,7 +322,7 @@ func TestActualUpgradeAndOpaqueRelay(t *testing.T) {
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(3 * time.Second))
-	fmt.Fprintf(c, "GET /tunnel?target=%s HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: %s\r\n\r\n", url.QueryEscape(listener.Addr().String()), protocol)
+	fmt.Fprintf(c, "GET /tunnel?target=%s HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: %s\r\n\r\n", url.QueryEscape("echo"), protocol)
 	reader := bufio.NewReader(c)
 	response, e := http.ReadResponse(reader, nil)
 	if e != nil {
@@ -359,9 +369,9 @@ func TestActualUpgradeAndOpaqueRelay(t *testing.T) {
 
 func TestDestinationPolicyReload(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "targets.json")
-	g := newGateway(config{upstream: "default:50051", targetsFile: file, maxConnections: 1})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: file, maxConnections: 1})
 	r := request()
-	r.URL.RawQuery = "target=added.internal%3A50051"
+	r.URL.RawQuery = "target=added"
 	write := func(data string) {
 		t.Helper()
 		if e := os.WriteFile(file, []byte(data), 0600); e != nil {
@@ -369,29 +379,154 @@ func TestDestinationPolicyReload(t *testing.T) {
 		}
 	}
 	write(`{"targets":{}}`)
-	if _, _, status := g.destination(r); status != 403 {
+	if _, status := g.destination(r); status != 403 {
 		t.Fatal(status)
 	}
-	write(`{"targets":{"added.internal:50051":{"tls":true}}}`)
-	if target, tls, status := g.destination(r); target != "added.internal:50051" || !tls || status != 0 {
-		t.Fatalf("reload failed: %s %t %d", target, tls, status)
+	write(`{"targets":{"demo":{"address":"default:50051","tls":false},"added":{"address":"added.internal:50051","tls":true}}}`)
+	if target, status := g.destination(r); target.label != "added" || target.address != "added.internal:50051" || !target.tls || status != 0 {
+		t.Fatalf("reload failed: %+v %d", target, status)
 	}
+	r.URL.RawQuery = ""
+	if target, status := g.destination(r); target.label != "demo" || target.address != "default:50051" || status != 0 {
+		t.Fatalf("default lookup failed: %+v %d", target, status)
+	}
+	write(`{"targets":{"demo":{"address":"new-default:50051","tls":true},"added":{"address":"added.internal:50051","tls":true}}}`)
+	if target, status := g.destination(r); target.label != "demo" || target.address != "new-default:50051" || !target.tls || status != 0 {
+		t.Fatalf("default remap failed: %+v %d", target, status)
+	}
+	r.URL.RawQuery = "target=added"
 	write(`{"targets":{}}`)
-	if _, _, status := g.destination(r); status != 403 {
+	if _, status := g.destination(r); status != 403 {
 		t.Fatal("removed target still allowed")
 	}
+	r.URL.RawQuery = ""
+	if _, status := g.destination(r); status != 403 {
+		t.Fatal("removed default target still allowed")
+	}
+	r.URL.RawQuery = "target=added"
 	for _, data := range []string{`{broken`, `{"targets":{}} {}`, strings.Repeat(" ", 65537)} {
 		write(data)
-		if _, _, status := g.destination(r); status != 503 {
+		if _, status := g.destination(r); status != 503 {
 			t.Fatalf("invalid config accepted: %d", status)
 		}
 	}
-	for _, query := range []string{"target=a:0", "target=a:65536", "target=:80", "target=http://a:80", "target=a:80&target=b:80", "target=%zz"} {
+	for _, query := range []string{"target=", "target=a:80", "target=A", "target=1a", "target=a.b", "target=a&target=b", "target=%zz"} {
 		r.URL.RawQuery = query
-		if _, _, status := g.destination(r); status != 400 {
+		if _, status := g.destination(r); status != 400 {
 			t.Fatalf("invalid target accepted: %s %d", query, status)
 		}
 	}
+}
+
+func TestPolicyRemapOnlyAffectsNewTunnels(t *testing.T) {
+	start := func(marker byte) net.Listener {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer conn.Close()
+					_, _ = conn.Write([]byte{marker})
+					_, _ = io.Copy(conn, conn)
+				}()
+			}
+		}()
+		return listener
+	}
+	a, b := start('A'), start('B')
+	defer a.Close()
+	defer b.Close()
+	file := filepath.Join(t.TempDir(), "targets.json")
+	write := func(address string) {
+		t.Helper()
+		data := fmt.Sprintf(`{"targets":{"demo":{"address":%q,"tls":false}}}`, address)
+		temp := file + ".new"
+		if err := os.WriteFile(temp, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(temp, file); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readGreeting := func(conn net.Conn, reader *bufio.Reader, want byte) {
+		t.Helper()
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var frame [3]byte
+		if _, err := io.ReadFull(reader, frame[:]); err != nil || frame != [3]byte{0x82, 1, want} {
+			t.Fatalf("backend greeting = %x, %v; want %c", frame, err, want)
+		}
+	}
+	write(a.Addr().String())
+	g := newGateway(config{defaultTarget: "demo", targetsFile: file, maxConnections: 3})
+	server := httptest.NewServer(g)
+	defer server.Close()
+	old, oldReader, response := rawHandshake(t, server.URL, "demo", "x")
+	defer old.Close()
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("original route: %s", response.Status)
+	}
+	readGreeting(old, oldReader, 'A')
+	write(b.Addr().String())
+	fresh, freshReader, response := rawHandshake(t, server.URL, "demo", "x")
+	defer fresh.Close()
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("remapped route: %s", response.Status)
+	}
+	readGreeting(fresh, freshReader, 'B')
+	echoThroughTunnel(t, old, oldReader, "still on A")
+	if err := os.WriteFile(file, []byte(`{"targets":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rejected, _, response := rawHandshake(t, server.URL, "demo", "x")
+	defer rejected.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("removed default target returned %s", response.Status)
+	}
+	echoThroughTunnel(t, old, oldReader, "A remains open")
+}
+
+func TestHealthzUsesCurrentDefaultMapping(t *testing.T) {
+	backend, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close()
+	file := filepath.Join(t.TempDir(), "targets.json")
+	write := func(data string) {
+		t.Helper()
+		if err := os.WriteFile(file, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(fmt.Sprintf(`{"targets":{"demo":{"address":%q}}}`, backend.Addr().String()))
+	g := newGateway(config{defaultTarget: "demo", targetsFile: file, maxConnections: 1})
+	g.setServing()
+	mux := http.NewServeMux()
+	healthRoutes(mux, g)
+	probe := func(want int) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		if recorder.Code != want {
+			t.Fatalf("healthz returned %d, want %d", recorder.Code, want)
+		}
+		if want != http.StatusOK && strings.Contains(recorder.Body.String(), backend.Addr().String()) {
+			t.Fatal("health response disclosed backend address")
+		}
+	}
+	probe(http.StatusOK)
+	write(`{"targets":{"demo":{"address":"127.0.0.1:1"}}}`)
+	probe(http.StatusServiceUnavailable)
+	write(`{"targets":{}}`)
+	probe(http.StatusServiceUnavailable)
+	write(`{"targets":invalid}`)
+	probe(http.StatusServiceUnavailable)
 }
 func FuzzRelay(f *testing.F) {
 	f.Add(clientFrame(2, true, []byte("test")))

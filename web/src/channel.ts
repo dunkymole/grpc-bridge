@@ -5,6 +5,27 @@ export const PROFILE = "grpc-tunnel.v1";
 const MAX_QUEUE = 1024 * 1024;
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
+const TARGET_LABEL = /^[a-z][a-z0-9_-]{0,62}(?![\s\S])/;
+
+/** Resolve and validate a logical target label before opening a WebSocket. */
+export function targetLabel(
+  url: string,
+  override?: string,
+): string | undefined {
+  const endpoint = new URL(url);
+  if (override !== undefined) {
+    if (typeof override !== "string" || !TARGET_LABEL.test(override))
+      throw new TypeError("Target must be a valid logical label");
+    return override;
+  }
+  const values = endpoint.searchParams.getAll("target");
+  if (values.length > 1)
+    throw new TypeError("Target query parameter must occur only once");
+  const label = values[0];
+  if (label !== undefined && !TARGET_LABEL.test(label))
+    throw new TypeError("Target must be a valid logical label");
+  return label;
+}
 
 /** One versioned WebSocket = one HTTP/2 session. Never reconnect or replay RPCs. */
 export async function openChannel(
@@ -14,6 +35,7 @@ export async function openChannel(
 ): Promise<H2Connection> {
   options.signal?.throwIfAborted();
   const endpoint = new URL(url);
+  targetLabel(url, options.target);
   if (options.target !== undefined)
     endpoint.searchParams.set("target", options.target);
   const ws = new WebSocket(

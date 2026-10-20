@@ -15,6 +15,41 @@ const url = process.env.TUNNEL_URL ?? "ws://localhost:8080/tunnel";
 const token = process.env.TUNNEL_TOKEN ?? "";
 
 test(
+  "managed authority defaults to the selected label and honors an override",
+  { timeout: 15000 },
+  async () => {
+    for (const [options, expected] of [
+      [{ url, target: "demo" }, "demo"],
+      [{ url: `${url}?target=demo` }, "demo"],
+      [{ url, target: "demo", authority: "demo.internal" }, "demo.internal"],
+      [{ url }, "backend"],
+    ] as const) {
+      const seen: string[] = [];
+      const connection = await openBridgeConnection({
+        ...options,
+        tunnelToken: token,
+        interceptors: [
+          (next) => async (request) => {
+            seen.push(new URL(request.url).host);
+            return next(request);
+          },
+        ],
+      });
+      try {
+        const client = createClient(DemoService, connection.transport);
+        assert.equal(
+          (await client.echo({ text: "authority" })).text,
+          "authority",
+        );
+        assert.deepEqual(seen, [expected]);
+      } finally {
+        await connection.close();
+      }
+    }
+  },
+);
+
+test(
   "client wrappers share leases without changing lifecycle, deadlines, or cancellation",
   { timeout: 15000 },
   async () => {
@@ -216,7 +251,7 @@ test(
         providerCalls++;
         return token;
       },
-      target: "python-demo:50051",
+      target: "demo",
       authority: "python-demo",
     } as const;
     const shared = createSharedBridgeConnection(options);

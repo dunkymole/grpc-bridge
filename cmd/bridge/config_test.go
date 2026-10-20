@@ -14,21 +14,23 @@ import (
 )
 
 func TestOfflineSettings(t *testing.T) {
-	for _, tc := range []struct{ name, listen, health, upstream, origin, cert, key string }{
-		{"valid", "127.0.0.1:8080", "127.0.0.1:8082", "offline.invalid:443", "https://example.com", "", ""},
-		{"bad listen", "secret", "localhost:8082", "localhost:443", "https://example.com", "", ""},
-		{"bad health", "localhost:8080", "localhost:0", "localhost:443", "https://example.com", "", ""},
-		{"bad upstream", "localhost:8080", "localhost:8082", "secret:99999", "https://example.com", "", ""},
-		{"bad origin", "localhost:8080", "localhost:8082", "localhost:443", "https://secret@example.com", "", ""},
-		{"origin empty hostname", "localhost:8080", "localhost:8082", "localhost:443", "https://:443", "", ""},
-		{"origin invalid port", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com:99999", "", ""},
-		{"origin zero port", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com:0", "", ""},
-		{"origin empty port", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com:", "", ""},
-		{"missing key", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com", "secret", ""},
-		{"missing files", "localhost:8080", "localhost:8082", "localhost:443", "https://example.com", "secret", "secret"},
+	policy := testTargetsFile(t, "offline.invalid:443", false)
+	for _, tc := range []struct{ name, listen, health, target, origin, cert, key string }{
+		{"valid", "127.0.0.1:8080", "127.0.0.1:8082", "demo", "https://example.com", "", ""},
+		{"bad listen", "secret", "localhost:8082", "demo", "https://example.com", "", ""},
+		{"bad health", "localhost:8080", "localhost:0", "demo", "https://example.com", "", ""},
+		{"bad default label", "localhost:8080", "localhost:8082", "secret:99999", "https://example.com", "", ""},
+		{"missing default label", "localhost:8080", "localhost:8082", "other", "https://example.com", "", ""},
+		{"bad origin", "localhost:8080", "localhost:8082", "demo", "https://secret@example.com", "", ""},
+		{"origin empty hostname", "localhost:8080", "localhost:8082", "demo", "https://:443", "", ""},
+		{"origin invalid port", "localhost:8080", "localhost:8082", "demo", "https://example.com:99999", "", ""},
+		{"origin zero port", "localhost:8080", "localhost:8082", "demo", "https://example.com:0", "", ""},
+		{"origin empty port", "localhost:8080", "localhost:8082", "demo", "https://example.com:", "", ""},
+		{"missing key", "localhost:8080", "localhost:8082", "demo", "https://example.com", "secret", ""},
+		{"missing files", "localhost:8080", "localhost:8082", "demo", "https://example.com", "secret", "secret"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateOfflineSettings(tc.listen, tc.health, tc.upstream, tc.origin, "", tc.cert, tc.key)
+			err := validateOfflineSettings(tc.listen, tc.health, tc.target, tc.origin, policy, tc.cert, tc.key)
 			if (err == nil) != (tc.name == "valid") {
 				t.Fatalf("unexpected result: %v", err)
 			}
@@ -40,13 +42,13 @@ func TestOfflineSettings(t *testing.T) {
 }
 
 func TestTargetPolicyValidation(t *testing.T) {
-	for _, body := range []string{`{"targets":{"backend:443":{"tls":true}}}`, `{"targets":{}}`, `null`, `{}`, `{"targets":null}`, `{"targets":{"secret:0":{}}}`, `{"targets":{"backend:443":{"secret":true}}}`, `{"targets":{}} {}`, strings.Repeat(" ", 65537)} {
+	for _, body := range []string{`{"targets":{"demo":{"address":"backend:443","tls":true}}}`, `{"targets":{"demo":{"address":"backend:443"}}}`, `{"targets":{}}`, `null`, `{}`, `{"targets":null}`, `{"targets":{"secret:0":{"address":"backend:443"}}}`, `{"targets":{"Demo":{"address":"backend:443"}}}`, `{"targets":{"demo":{"address":"secret:0"}}}`, `{"targets":{"demo":{"address":"backend:443","tls":null}}}`, `{"targets":{"demo":{"address":"backend:443","secret":true}}}`, `{"targets":{"demo":{"address":"backend:443"},"demo":{"address":"other:443"}}}`, `{"targets":{}} {}`, strings.Repeat(" ", 65537)} {
 		path := filepath.Join(t.TempDir(), "policy.json")
 		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
 		_, err := readTargetPolicy(path)
-		valid := body == `{"targets":{"backend:443":{"tls":true}}}` || body == `{"targets":{}}`
+		valid := body == `{"targets":{"demo":{"address":"backend:443","tls":true}}}` || body == `{"targets":{"demo":{"address":"backend:443"}}}` || body == `{"targets":{}}`
 		if (err == nil) != valid {
 			t.Fatalf("unexpected policy result: %v", err)
 		}
@@ -87,7 +89,7 @@ func TestCheckConfigProcess(t *testing.T) {
 		{[]string{"-max-grant-lifetime=1m"}, true},
 	} {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		args := []string{"-check-config", "-listen=" + listener.Addr().String(), "-upstream=" + listener.Addr().String(), "-health-listen=127.0.0.1:8082"}
+		args := []string{"-check-config", "-listen=" + listener.Addr().String(), "-targets-file=" + testTargetsFile(t, listener.Addr().String(), false), "-health-listen=127.0.0.1:8082"}
 		args = append(args, tc.args...)
 		command := exec.CommandContext(ctx, processBridgeBinary, args...)
 		command.Env = []string{"ALLOWED_ORIGIN=https://example.com"}
@@ -125,7 +127,7 @@ func TestOfflineTLSFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	validate := func() error {
-		return validateOfflineSettings("localhost:8080", "localhost:8082", "localhost:443", "https://example.com", "", certPath, keyPath)
+		return validateOfflineSettings("localhost:8080", "localhost:8082", "demo", "https://example.com", testTargetsFile(t, "localhost:443", false), certPath, keyPath)
 	}
 	if err := validate(); err != nil {
 		t.Fatal(err)

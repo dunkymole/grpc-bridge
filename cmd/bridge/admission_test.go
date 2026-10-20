@@ -20,7 +20,7 @@ import (
 )
 
 func TestAdmissionRequestAndGrantAreTargetBound(t *testing.T) {
-	target := "backend.internal:443"
+	target := "backend"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.Header.Get("Content-Type") != "application/json" {
 			t.Fatalf("unexpected admission request: %s %s", r.Method, r.URL.String())
@@ -45,21 +45,21 @@ func TestAdmissionRequestAndGrantAreTargetBound(t *testing.T) {
 }
 
 func TestAdmissionRejectsMalformedAndOutOfScopeGrants(t *testing.T) {
-	target := "backend.internal:443"
+	target := "backend"
 	validExpiry := time.Now().Add(30 * time.Second).Unix()
 	cases := []struct {
 		name string
 		body string
 	}{
-		{"wrong target", fmt.Sprintf(`{"version":1,"subject":"u","target":"other.internal:443","expires_at":%d}`, validExpiry)},
-		{"missing expiry", `{"version":1,"subject":"u","target":"backend.internal:443"}`},
-		{"expired", `{"version":1,"subject":"u","target":"backend.internal:443","expires_at":1}`},
-		{"too long", fmt.Sprintf(`{"version":1,"subject":"u","target":"backend.internal:443","expires_at":%d}`, time.Now().Add(2*time.Hour).Unix())},
-		{"unknown key", fmt.Sprintf(`{"version":1,"subject":"u","target":"backend.internal:443","expires_at":%d,"admin":true}`, validExpiry)},
-		{"duplicate key", fmt.Sprintf(`{"version":1,"subject":"u","subject":"v","target":"backend.internal:443","expires_at":%d}`, validExpiry)},
-		{"case shadow", fmt.Sprintf(`{"version":1,"subject":"u","SUBJECT":"v","target":"backend.internal:443","expires_at":%d}`, validExpiry)},
-		{"invalid subject", fmt.Sprintf(`{"version":1,"subject":"u\nadmin","target":"backend.internal:443","expires_at":%d}`, validExpiry)},
-		{"multiple values", fmt.Sprintf(`{"version":1,"subject":"u","target":"backend.internal:443","expires_at":%d} {}`, validExpiry)},
+		{"wrong target", fmt.Sprintf(`{"version":1,"subject":"u","target":"other","expires_at":%d}`, validExpiry)},
+		{"missing expiry", `{"version":1,"subject":"u","target":"backend"}`},
+		{"expired", `{"version":1,"subject":"u","target":"backend","expires_at":1}`},
+		{"too long", fmt.Sprintf(`{"version":1,"subject":"u","target":"backend","expires_at":%d}`, time.Now().Add(2*time.Hour).Unix())},
+		{"unknown key", fmt.Sprintf(`{"version":1,"subject":"u","target":"backend","expires_at":%d,"admin":true}`, validExpiry)},
+		{"duplicate key", fmt.Sprintf(`{"version":1,"subject":"u","subject":"v","target":"backend","expires_at":%d}`, validExpiry)},
+		{"case shadow", fmt.Sprintf(`{"version":1,"subject":"u","SUBJECT":"v","target":"backend","expires_at":%d}`, validExpiry)},
+		{"invalid subject", fmt.Sprintf(`{"version":1,"subject":"u\nadmin","target":"backend","expires_at":%d}`, validExpiry)},
+		{"multiple values", fmt.Sprintf(`{"version":1,"subject":"u","target":"backend","expires_at":%d} {}`, validExpiry)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestAdmissionFailureStatusRedirectAndBodyLimit(t *testing.T) {
 	}))
 	defer redirect.Close()
 	g := newGateway(config{maxConnections: 1, admissionURL: redirect.URL})
-	if _, status := g.authorizeTarget(context.Background(), "jwt", "target:1"); status != http.StatusServiceUnavailable || redirected.Load() {
+	if _, status := g.authorizeTarget(context.Background(), "jwt", "target"); status != http.StatusServiceUnavailable || redirected.Load() {
 		t.Fatalf("redirect was followed or not treated as outage: %d %t", status, redirected.Load())
 	}
 
@@ -93,7 +93,7 @@ func TestAdmissionFailureStatusRedirectAndBodyLimit(t *testing.T) {
 	}))
 	defer large.Close()
 	g.admissionURL = large.URL
-	if _, status := g.authorizeTarget(context.Background(), "jwt", "target:1"); status != http.StatusServiceUnavailable {
+	if _, status := g.authorizeTarget(context.Background(), "jwt", "target"); status != http.StatusServiceUnavailable {
 		t.Fatalf("oversized response accepted: %d", status)
 	}
 }
@@ -202,7 +202,7 @@ func TestAdmissionURLRequiresTLSOutsideLoopback(t *testing.T) {
 
 func TestAdmissionDecodeErrorsDoNotLeakCredential(t *testing.T) {
 	g := newGateway(config{maxConnections: 1, admissionURL: "://invalid"})
-	if _, status := g.authorizeTarget(context.Background(), "top.secret.jwt", "target:1"); status != http.StatusServiceUnavailable {
+	if _, status := g.authorizeTarget(context.Background(), "top.secret.jwt", "target"); status != http.StatusServiceUnavailable {
 		t.Fatal(status)
 	}
 	if err := decodeStrictJSON([]byte(`{"unexpected":true}`), &admissionResponse{}); err == nil || errors.Is(err, context.Canceled) {
@@ -217,7 +217,7 @@ func TestAdmissionDenialAndUnauthorizedDestinationNeverDialOrUpgrade(t *testing.
 	}
 	defer backend.Close()
 	policy := filepath.Join(t.TempDir(), "targets.json")
-	if err := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{%q:{"tls":false}}}`, backend.Addr().String())), 0600); err != nil {
+	if err := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{"backend":{"address":%q,"tls":false},"demo":{"address":"default.internal:50051","tls":false}}}`, backend.Addr().String())), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var admissionCalls atomic.Int32
@@ -226,7 +226,7 @@ func TestAdmissionDenialAndUnauthorizedDestinationNeverDialOrUpgrade(t *testing.
 		http.Error(w, "denied", http.StatusUnauthorized)
 	}))
 	defer denied.Close()
-	g := newGateway(config{upstream: "default.internal:50051", targetsFile: policy, admissionURL: denied.URL, maxConnections: 2})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: policy, admissionURL: denied.URL, maxConnections: 2})
 	server := httptest.NewServer(g)
 	defer server.Close()
 
@@ -235,8 +235,9 @@ func TestAdmissionDenialAndUnauthorizedDestinationNeverDialOrUpgrade(t *testing.
 		status       int
 		calls        int32
 	}{
-		{"verifier denied", backend.Addr().String(), http.StatusUnauthorized, 1},
-		{"static allowlist denied", "127.0.0.1:1", http.StatusForbidden, 1},
+		{"verifier denied", "backend", http.StatusUnauthorized, 1},
+		{"policy denied", "unknown", http.StatusForbidden, 1},
+		{"raw address rejected", backend.Addr().String(), http.StatusBadRequest, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, _, response := rawHandshake(t, server.URL, tc.target, "secret.jwt")
@@ -292,7 +293,7 @@ func TestAdmissionQuotaIsolatedAndGrantExpiryClosesBothTunnelLegs(t *testing.T) 
 		}
 	}()
 	policy := filepath.Join(t.TempDir(), "targets.json")
-	if err := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{%q:{"tls":false}}}`, backend.Addr().String())), 0600); err != nil {
+	if err := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{"backend":{"address":%q,"tls":false},"demo":{"address":"default.internal:50051","tls":false}}}`, backend.Addr().String())), 0600); err != nil {
 		t.Fatal(err)
 	}
 	admission := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -309,23 +310,23 @@ func TestAdmissionQuotaIsolatedAndGrantExpiryClosesBothTunnelLegs(t *testing.T) 
 		_ = json.NewEncoder(w).Encode(admissionResponse{Version: 1, Subject: subject, Target: request.Target, ExpiresAt: time.Now().Add(4 * time.Second).Unix()})
 	}))
 	defer admission.Close()
-	g := newGateway(config{upstream: "default.internal:50051", targetsFile: policy, admissionURL: admission.URL, maxConnections: 4, maxPerPrincipal: 1, maxGrantLifetime: 10 * time.Second, maxTunnelLifetime: time.Minute})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: policy, admissionURL: admission.URL, maxConnections: 4, maxPerPrincipal: 1, maxGrantLifetime: 10 * time.Second, maxTunnelLifetime: time.Minute})
 	server := httptest.NewServer(g)
 	defer server.Close()
 
-	alpha, _, response := rawHandshake(t, server.URL, backend.Addr().String(), "alpha.jwt")
+	alpha, _, response := rawHandshake(t, server.URL, "backend", "alpha.jwt")
 	if response.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("initial admission failed: %s", response.Status)
 	}
 	if got := response.Header.Get("Sec-WebSocket-Protocol"); got != protocol {
 		t.Fatalf("server reflected credential or selected wrong protocol: %q", got)
 	}
-	second, _, response := rawHandshake(t, server.URL, backend.Addr().String(), "alpha.jwt")
+	second, _, response := rawHandshake(t, server.URL, "backend", "alpha.jwt")
 	second.Close()
 	if response.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("same principal quota not enforced: %s", response.Status)
 	}
-	beta, _, response := rawHandshake(t, server.URL, backend.Addr().String(), "beta.jwt")
+	beta, _, response := rawHandshake(t, server.URL, "backend", "beta.jwt")
 	if response.StatusCode != http.StatusSwitchingProtocols {
 		beta.Close()
 		t.Fatalf("sibling principal was blocked: %s", response.Status)
@@ -387,7 +388,7 @@ func TestAdmissionQuotaReleasesAfterUpstreamDialFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := filepath.Join(t.TempDir(), "targets.json")
-	if err := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{%q:{"tls":false}}}`, target)), 0600); err != nil {
+	if err := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{"backend":{"address":%q,"tls":false},"demo":{"address":"default.internal:50051","tls":false}}}`, target)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var admissionCalls atomic.Int32
@@ -402,12 +403,12 @@ func TestAdmissionQuotaReleasesAfterUpstreamDialFailure(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(admissionResponse{Version: 1, Subject: "retryable", Target: request.Target, ExpiresAt: time.Now().Add(time.Minute).Unix()})
 	}))
 	defer admission.Close()
-	g := newGateway(config{upstream: "default.internal:50051", targetsFile: policy, admissionURL: admission.URL, maxConnections: 2, maxPerPrincipal: 1, maxGrantLifetime: 2 * time.Minute, maxTunnelLifetime: time.Minute})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: policy, admissionURL: admission.URL, maxConnections: 2, maxPerPrincipal: 1, maxGrantLifetime: 2 * time.Minute, maxTunnelLifetime: time.Minute})
 	server := httptest.NewServer(g)
 	defer server.Close()
 
 	for attempt := 0; attempt < 2; attempt++ {
-		conn, _, response := rawHandshake(t, server.URL, target, "retry.jwt")
+		conn, _, response := rawHandshake(t, server.URL, "backend", "retry.jwt")
 		conn.Close()
 		if response.StatusCode != http.StatusBadGateway {
 			t.Fatalf("attempt %d returned %s, want upstream failure", attempt+1, response.Status)
@@ -422,6 +423,83 @@ func TestAdmissionQuotaReleasesAfterUpstreamDialFailure(t *testing.T) {
 	if remaining != 0 {
 		t.Fatalf("principal quota leaked after failed dials: %#v", g.principals)
 	}
+}
+
+func TestAdmissionUsesLabelAndResolvedAddressSnapshot(t *testing.T) {
+	a, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	file := filepath.Join(t.TempDir(), "targets.json")
+	write := func(address string) {
+		t.Helper()
+		data := fmt.Sprintf(`{"targets":{"demo":{"address":%q,"tls":false}}}`, address)
+		if err := os.WriteFile(file, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(a.Addr().String())
+	seen := make(chan string, 2)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	admission := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input admissionRequest
+		if decodeStrictJSON(readBody(t, r), &input) != nil {
+			http.Error(w, "invalid", http.StatusBadRequest)
+			return
+		}
+		seen <- input.Target
+		if calls.Add(1) == 1 {
+			<-release
+		}
+		_ = json.NewEncoder(w).Encode(admissionResponse{Version: 1, Subject: "user", Target: input.Target, ExpiresAt: time.Now().Add(time.Minute).Unix()})
+	}))
+	defer admission.Close()
+	g := newGateway(config{defaultTarget: "demo", targetsFile: file, admissionURL: admission.URL, maxConnections: 2})
+	server := httptest.NewServer(g)
+	defer server.Close()
+	type result struct {
+		conn   net.Conn
+		status int
+	}
+	first := make(chan result, 1)
+	go func() {
+		conn, _, response := rawHandshake(t, server.URL, "demo", "jwt")
+		first <- result{conn, response.StatusCode}
+	}()
+	if target := <-seen; target != "demo" {
+		t.Fatalf("admission saw address instead of label: %q", target)
+	}
+	write(b.Addr().String())
+	close(release)
+	initial := <-first
+	defer initial.conn.Close()
+	if initial.status != http.StatusSwitchingProtocols {
+		t.Fatalf("initial handshake: %d", initial.status)
+	}
+	_ = a.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
+	initialBackend, err := a.Accept()
+	if err != nil {
+		t.Fatalf("in-flight tunnel did not use original mapping: %v", err)
+	}
+	defer initialBackend.Close()
+	next, _, response := rawHandshake(t, server.URL, "demo", "jwt")
+	defer next.Close()
+	if response.StatusCode != http.StatusSwitchingProtocols || <-seen != "demo" {
+		t.Fatalf("new tunnel did not authorize label and use remap: %s", response.Status)
+	}
+	_ = b.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
+	nextBackend, err := b.Accept()
+	if err != nil {
+		t.Fatalf("new tunnel did not use remapped address: %v", err)
+	}
+	defer nextBackend.Close()
 }
 
 func rawHandshake(t *testing.T, serverURL, target, credential string) (net.Conn, *bufio.Reader, *http.Response) {

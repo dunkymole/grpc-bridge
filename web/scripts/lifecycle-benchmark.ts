@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { createClient, Code, ConnectError } from "@connectrpc/connect";
 import { openChannel } from "../src/channel.js";
@@ -11,6 +13,7 @@ import { DemoService } from "../src/gen/demo_pb.js";
 const exec = promisify(execFile);
 const prefix = `bridge-lifecycle-${randomUUID().slice(0, 8)}`;
 const containers: string[] = [];
+let policyDir: string | undefined;
 const results: object[] = [];
 const expectedCalls: string[] = [];
 const sleep = (ms: number) =>
@@ -110,6 +113,14 @@ async function main() {
     backendProgram,
   ]);
   await until(async () => (await docker("logs", backend)).includes("READY"));
+  policyDir = await mkdtemp(join(tmpdir(), "bridge-lifecycle-policy-"));
+  const policyFile = join(policyDir, "targets.json");
+  await writeFile(
+    policyFile,
+    JSON.stringify({
+      targets: { audited: { address: `${backendName}:50051`, tls: false } },
+    }),
+  );
 
   for (const scenario of ["admission", "graceful", "forced"] as const) {
     const started = Date.now();
@@ -118,8 +129,12 @@ async function main() {
       network,
       "-p",
       "127.0.0.1::8080",
+      "--mount",
+      `type=bind,source=${policyFile},target=/config/targets.json,readonly`,
       "-e",
-      `UPSTREAM=${backendName}:50051`,
+      "DEFAULT_TARGET=audited",
+      "-e",
+      "TARGETS_FILE=/config/targets.json",
       "-e",
       "MAX_CONNECTIONS_PER_PRINCIPAL=2",
       "-e",
@@ -364,5 +379,6 @@ try {
   );
   for (const id of containers.reverse())
     await docker("rm", "-f", id).catch(() => {});
+  if (policyDir) await rm(policyDir, { recursive: true, force: true });
 }
 if (failure) console.error(failure);

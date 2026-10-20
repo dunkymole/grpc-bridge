@@ -14,9 +14,12 @@ services:
       dockerfile: Dockerfile
     environment:
       LISTEN: 0.0.0.0:8080
-      UPSTREAM: tcp-echo:9010
+      DEFAULT_TARGET: echo
+      TARGETS_FILE: /config/targets.json
       TUNNEL_TOKEN: gates-test-token
       ALLOWED_ORIGIN: http://localhost:18081
+    volumes:
+      - ./targets.json:/config/targets.json:ro
     depends_on:
       tcp-echo:
         condition: service_healthy

@@ -26,7 +26,7 @@ func TestConnectivityDNSFailureAndDeadline(t *testing.T) {
 	for _, wait := range []bool{false, true} {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 		start := time.Now()
-		report, code := diagnoseConnectivity(ctx, config{upstream: "secret.invalid:443"}, "", failingResolver{wait})
+		report, code := diagnoseConnectivity(ctx, config{defaultTarget: "demo", targetsFile: testTargetsFile(t, "secret.invalid:443", false)}, "", failingResolver{wait})
 		cancel()
 		if code != 3 || report.Stage != "dns" || strings.Contains(report.Message, "secret") {
 			t.Fatalf("unexpected report: %+v / %d", report, code)
@@ -44,7 +44,7 @@ func TestConnectivityPlaintextAndPolicy(t *testing.T) {
 	defer listener.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	c := config{upstream: listener.Addr().String()}
+	c := config{defaultTarget: "demo", targetsFile: testTargetsFile(t, listener.Addr().String(), false)}
 	report, code := diagnoseConnectivity(ctx, c, "", net.DefaultResolver)
 	if code != 0 || !report.OK || report.TLS {
 		t.Fatalf("unexpected report: %+v / %d", report, code)
@@ -85,7 +85,7 @@ func TestConnectivityTLS(t *testing.T) {
 			var entered, received atomic.Int32
 			address := startTLSEcho(t, cert, tc.protocols, &entered, &received)
 			_, port, _ := net.SplitHostPort(address)
-			c := config{upstream: net.JoinHostPort("localhost", port), upstreamTLS: true}
+			c := config{defaultTarget: "demo", targetsFile: testTargetsFile(t, net.JoinHostPort("localhost", port), true)}
 			if tc.trusted {
 				c.upstreamRoots = roots
 			}
@@ -109,7 +109,7 @@ func TestConnectivityTLSStall(t *testing.T) {
 	defer listener.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	report, code := diagnoseConnectivity(ctx, config{upstream: listener.Addr().String(), upstreamTLS: true}, "", net.DefaultResolver)
+	report, code := diagnoseConnectivity(ctx, config{defaultTarget: "demo", targetsFile: testTargetsFile(t, listener.Addr().String(), true)}, "", net.DefaultResolver)
 	if code != 5 || report.Stage != "tls" {
 		t.Fatalf("unexpected result: %+v / %d", report, code)
 	}
@@ -122,15 +122,15 @@ func TestConnectivityTLSStall(t *testing.T) {
 
 func TestDiagnosticPolicySelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "targets.json")
-	if err := os.WriteFile(path, []byte(`{"targets":{"backend:443":{"tls":true}}}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"targets":{"backend":{"address":"backend:443","tls":true},"demo":{"address":"localhost:50051","tls":false}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	c := config{upstream: "localhost:50051", targetsFile: path}
-	destination, secure, ok := diagnosticDestination(c, "backend:443")
+	c := config{defaultTarget: "demo", targetsFile: path}
+	destination, secure, ok := diagnosticDestination(c, "backend")
 	if !ok || !secure || destination != "backend:443" {
 		t.Fatal("policy TLS selection failed")
 	}
-	if _, _, ok := diagnosticDestination(c, "other:443"); ok {
+	if _, _, ok := diagnosticDestination(c, "other"); ok {
 		t.Fatal("unconfigured target accepted")
 	}
 }
@@ -157,7 +157,7 @@ func TestDiagnosticProcess(t *testing.T) {
 		{[]string{"-check-config"}, 1, ""},
 	} {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		args := append([]string{"-diagnose", "-upstream=" + listener.Addr().String(), "-listen=" + listener.Addr().String()}, tc.args...)
+		args := append([]string{"-diagnose", "-targets-file=" + testTargetsFile(t, listener.Addr().String(), false), "-listen=" + listener.Addr().String()}, tc.args...)
 		command := exec.CommandContext(ctx, processBridgeBinary, args...)
 		command.Env = []string{"ALLOWED_ORIGIN=https://example.com"}
 		output, err := command.CombinedOutput()

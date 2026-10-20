@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { create, toBinary } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
@@ -14,6 +16,7 @@ import { parsePrometheus } from "./load-benchmark-lib.js";
 const exec = promisify(execFile);
 const prefix = `bridge-pressure-${randomUUID().slice(0, 8)}`;
 const containers: string[] = [];
+const policyDirs: string[] = [];
 const results: object[] = [];
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -77,14 +80,27 @@ async function main() {
         await sleep(25);
       }
     }
+    const policyDir = await mkdtemp(join(tmpdir(), "bridge-pressure-policy-"));
+    policyDirs.push(policyDir);
+    const policyFile = join(policyDir, "targets.json");
+    await writeFile(
+      policyFile,
+      JSON.stringify({
+        targets: { pressure: { address: `${upstream}:50051`, tls: false } },
+      }),
+    );
     const bridge = await launch(
       mode,
       "--network",
       network,
       "-p",
       "127.0.0.1::8080",
+      "--mount",
+      `type=bind,source=${policyFile},target=/config/targets.json,readonly`,
       "-e",
-      `UPSTREAM=${upstream}:50051`,
+      "DEFAULT_TARGET=pressure",
+      "-e",
+      "TARGETS_FILE=/config/targets.json",
       bridgeImage,
     );
     const port = (await docker("port", bridge, "8080/tcp")).split(":").at(-1)!;
@@ -230,5 +246,7 @@ try {
   );
   for (const id of containers.reverse())
     await docker("rm", "-f", id).catch(() => {});
+  for (const dir of policyDirs.reverse())
+    await rm(dir, { recursive: true, force: true });
 }
 if (failure) console.error(failure);

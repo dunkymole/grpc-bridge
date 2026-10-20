@@ -45,7 +45,7 @@ import { GreeterContract } from "./gen/greeter_contract.js";
 
 const connection = createBridgeConnection({
   url: "wss://bridge.example.com/tunnel",
-  target: "greeter.internal:443",
+  target: "greeter",
   retry: {
     methods: {
       "/helloworld.Greeter/SayHello": {

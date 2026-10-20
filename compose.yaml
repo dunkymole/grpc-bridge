@@ -5,8 +5,8 @@ services:
     ports:
       - "${BRIDGE_BIND:-127.0.0.1}:${BRIDGE_PORT:-8080}:8080"
     environment:
-      UPSTREAM: backend:50051
       TARGETS_FILE: /config/targets.json
+      DEFAULT_TARGET: demo
       ALLOWED_ORIGIN: ${BRIDGE_ORIGIN:-http://localhost:8080}
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
       MAX_CONNECTIONS_PER_PRINCIPAL: ${MAX_CONNECTIONS_PER_PRINCIPAL:-8}

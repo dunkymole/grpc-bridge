@@ -1,0 +1,5 @@
+{
+  "targets": {
+    "echo": { "address": "tcp-echo:9010", "tls": false }
+  }
+}

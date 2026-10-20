@@ -68,7 +68,8 @@ func startBridgeChild(t *testing.T, upstream, admissionURL, grace string) *bridg
 	values := map[string]string{
 		"LISTEN":                       listen,
 		"HEALTH_LISTEN":                health,
-		"UPSTREAM":                     upstream,
+		"DEFAULT_TARGET":               "demo",
+		"TARGETS_FILE":                 testTargetsFile(t, upstream, false),
 		"TUNNEL_TOKEN":                 "",
 		"ADMISSION_URL":                admissionURL,
 		"DRAIN_GRACE_PERIOD":           grace,
@@ -247,7 +248,7 @@ func TestProcessGracefulDrainKeepsLivenessAndActiveTunnel(t *testing.T) {
 	backend, backendClosed := startEchoBackend(t)
 	child := startBridgeChild(t, backend, "", "5s")
 	healthcheckCommand(t, child, true)
-	conn, reader := establishChildTunnel(t, child, backend)
+	conn, reader := establishChildTunnel(t, child, "demo")
 	signalChild(t, child)
 	waitHTTPStatus(t, child.readyURL, http.StatusServiceUnavailable, 2*time.Second)
 	waitHTTPStatus(t, child.baseURL+"/livez", http.StatusOK, time.Second)
@@ -262,7 +263,7 @@ func TestProcessGracefulDrainKeepsLivenessAndActiveTunnel(t *testing.T) {
 	if err != nil || !bytes.Contains(metricsData, []byte("bridge_draining 1\n")) {
 		t.Fatalf("drain state missing from metrics: %v\n%s", err, metricsData)
 	}
-	rejectedConn, _, response := rawHandshake(t, child.baseURL, backend, "")
+	rejectedConn, _, response := rawHandshake(t, child.baseURL, "demo", "")
 	_ = response.Body.Close()
 	_ = rejectedConn.Close()
 	if response.StatusCode != http.StatusServiceUnavailable {
@@ -287,7 +288,7 @@ func TestProcessGracefulDrainKeepsLivenessAndActiveTunnel(t *testing.T) {
 func TestProcessDrainDeadlineForcesBothTunnelLegsClosed(t *testing.T) {
 	backend, backendClosed := startEchoBackend(t)
 	child := startBridgeChild(t, backend, "", "700ms")
-	conn, reader := establishChildTunnel(t, child, backend)
+	conn, reader := establishChildTunnel(t, child, "demo")
 	signalChild(t, child)
 	waitHTTPStatus(t, child.readyURL, http.StatusServiceUnavailable, 2*time.Second)
 	echoThroughTunnel(t, conn, reader, "still alive during grace")
@@ -313,7 +314,7 @@ func TestProcessDrainDeadlineForcesBothTunnelLegsClosed(t *testing.T) {
 func TestProcessSecondSignalForcesDrainImmediately(t *testing.T) {
 	backend, backendClosed := startEchoBackend(t)
 	child := startBridgeChild(t, backend, "", "1m")
-	conn, reader := establishChildTunnel(t, child, backend)
+	conn, reader := establishChildTunnel(t, child, "demo")
 	signalChild(t, child)
 	waitHTTPStatus(t, child.readyURL, http.StatusServiceUnavailable, 2*time.Second)
 	echoThroughTunnel(t, conn, reader, "before second signal")
@@ -349,18 +350,18 @@ func TestProcessSecondSignalCancelsBlockedAdmissionImmediately(t *testing.T) {
 			case <-r.Context().Done():
 			}
 		}
-		_, _ = fmt.Fprintf(w, `{"version":1,"subject":"process-test","target":%q,"expires_at":%d}`, backend, time.Now().Add(30*time.Second).Unix())
+		_, _ = fmt.Fprintf(w, `{"version":1,"subject":"process-test","target":%q,"expires_at":%d}`, "demo", time.Now().Add(30*time.Second).Unix())
 	}))
 	defer admission.Close()
 	defer close(blocked)
 	child := startBridgeChild(t, backend, admission.URL, "1m")
-	tunnelConn, tunnelReader, response := rawHandshake(t, child.baseURL, backend, "accepted.jwt")
+	tunnelConn, tunnelReader, response := rawHandshake(t, child.baseURL, "demo", "accepted.jwt")
 	if response.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("initial tunnel handshake returned %s", response.Status)
 	}
 	result := make(chan int, 1)
 	go func() {
-		conn, _, response := rawHandshake(t, child.baseURL, backend, "process.jwt")
+		conn, _, response := rawHandshake(t, child.baseURL, "demo", "process.jwt")
 		defer conn.Close()
 		result <- response.StatusCode
 	}()
@@ -472,10 +473,10 @@ func TestHTTPServerDrainRawClosesIdleTLSConnection(t *testing.T) {
 
 	serverPipe, clientPipe := net.Pipe()
 	listener := &singleConnListener{conn: tls.Server(serverPipe, &tls.Config{Certificates: []tls.Certificate{certificate}}), closed: make(chan struct{})}
-	g := newGateway(config{maxConnections: 2})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, "127.0.0.1:1", false), maxConnections: 2})
 	g.setServing()
 	mux := http.NewServeMux()
-	healthRoutes(mux, g, "127.0.0.1:1")
+	healthRoutes(mux, g)
 	server := &http.Server{Handler: mux, ConnState: g.httpConnState}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve(listener) }()
@@ -566,7 +567,7 @@ func TestDrainClosesClientReturnedAfterForcedHijack(t *testing.T) {
 			backendPeer <- conn
 		}
 	}()
-	g := newGateway(config{upstream: backend.Addr().String(), maxConnections: 2})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, backend.Addr().String(), false), maxConnections: 2})
 	g.setServing()
 	client, returnedConn := net.Pipe()
 	writer := &delayedHijacker{entered: make(chan struct{}), release: make(chan struct{}), conn: returnedConn, header: make(http.Header)}
@@ -623,7 +624,7 @@ func TestProcessDrainRechecksPendingAdmissionBeforeUpgrade(t *testing.T) {
 	admission := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		entered <- struct{}{}
 		<-release
-		_, _ = fmt.Fprintf(w, `{"version":1,"subject":"process-test","target":%q,"expires_at":%d}`, backend, time.Now().Add(30*time.Second).Unix())
+		_, _ = fmt.Fprintf(w, `{"version":1,"subject":"process-test","target":%q,"expires_at":%d}`, "demo", time.Now().Add(30*time.Second).Unix())
 	}))
 	defer admission.Close()
 	defer close(release)
@@ -633,7 +634,7 @@ func TestProcessDrainRechecksPendingAdmissionBeforeUpgrade(t *testing.T) {
 		response *http.Response
 	}, 1)
 	go func() {
-		conn, _, response := rawHandshake(t, child.baseURL, backend, "process.jwt")
+		conn, _, response := rawHandshake(t, child.baseURL, "demo", "process.jwt")
 		result <- struct {
 			conn     net.Conn
 			response *http.Response

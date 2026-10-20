@@ -1,0 +1,106 @@
+diff --git a/examples/clients/grpc-bridge/targets.json b/examples/clients/grpc-bridge/targets.json
+--- a/examples/clients/grpc-bridge/targets.json
++++ b/examples/clients/grpc-bridge/targets.json
+@@ -1,8 +1,8 @@
+ {
+   "targets": {
+-    "go-server:50051": { "tls": false },
+-    "java-server:50053": { "tls": false },
+-    "dotnet-server:50054": { "tls": false },
+-    "python-server:50055": { "tls": false }
++    "go": { "address": "go-server:50051", "tls": false },
++    "java": { "address": "java-server:50053", "tls": false },
++    "dotnet": { "address": "dotnet-server:50054", "tls": false },
++    "python": { "address": "python-server:50055", "tls": false }
+   }
+ }
+diff --git a/examples/clients/grpc-bridge/Dockerfile b/examples/clients/grpc-bridge/Dockerfile
+--- a/examples/clients/grpc-bridge/Dockerfile
++++ b/examples/clients/grpc-bridge/Dockerfile
+@@ -18,6 +18,6 @@
+ COPY examples/rollout/targets.json /config/rollout-targets.json
+ USER 65532:65532
+-ENV LISTEN=0.0.0.0:8080 UPSTREAM=go-server:50051 TARGETS_FILE=/config/targets.json
++ENV LISTEN=0.0.0.0:8080 DEFAULT_TARGET=go TARGETS_FILE=/config/targets.json
+ ENTRYPOINT ["/bridge"]
+ 
+ FROM node:24-alpine AS package
+diff --git a/examples/clients/grpc-bridge/client.ts b/examples/clients/grpc-bridge/client.ts
+--- a/examples/clients/grpc-bridge/client.ts
++++ b/examples/clients/grpc-bridge/client.ts
+@@ -8,10 +8,10 @@
+ import { contract, runtimeGraph } from "./gen/echo_contract.js";
+ 
+ const servers = {
+-  Go: "go-server:50051",
+-  Java: "java-server:50053",
+-  ".NET": "dotnet-server:50054",
+-  Python: "python-server:50055",
++  Go: "go",
++  Java: "java",
++  ".NET": "dotnet",
++  Python: "python",
+ };
+ 
+ for (const [expected, target] of Object.entries(servers)) {
+diff --git a/examples/rollout/targets.json b/examples/rollout/targets.json
+--- a/examples/rollout/targets.json
++++ b/examples/rollout/targets.json
+@@ -1,7 +1,7 @@
+ {
+   "targets": {
+-    "rollout-old:50051": { "tls": false },
+-    "rollout-new:50051": { "tls": false },
+-    "rollout-major:50051": { "tls": false }
++    "old": { "address": "rollout-old:50051", "tls": false },
++    "next": { "address": "rollout-new:50051", "tls": false },
++    "major": { "address": "rollout-major:50051", "tls": false }
+   }
+ }
+diff --git a/examples/rollout/compose.yml b/examples/rollout/compose.yml
+--- a/examples/rollout/compose.yml
++++ b/examples/rollout/compose.yml
+@@ -30,7 +30,7 @@
+         GRPC_BRIDGE_REF: ${GRPC_BRIDGE_REF:-200f417ce5b070d2c6e5214870a2b0887fa9058f}
+     environment:
+       LISTEN: 0.0.0.0:8080
+-      UPSTREAM: rollout-new:50051
++      DEFAULT_TARGET: next
+       TARGETS_FILE: /config/rollout-targets.json
+     depends_on:
+       - rollout-old
+diff --git a/examples/rollout/client.ts b/examples/rollout/client.ts
+--- a/examples/rollout/client.ts
++++ b/examples/rollout/client.ts
+@@ -80,12 +80,12 @@
+ // This connection remains tied to the old endpoint after later dials select
+ // different destinations; the bridge does not move an established tunnel.
+-const pinnedOld = await openBridgeConnection({ url: bridge, target: destinations.old });
++const pinnedOld = await openBridgeConnection({ url: bridge, target: "old" });
+ openedConnections.push(pinnedOld);
+ const oldClient = pinnedOld.client(v1_0);
+ const oldInitial = await oldClient.echo({ text: "old", requestId: "before-rollout" }, callOptions());
+ assert.equal(oldInitial.serverLanguage, "v1.0.0");
+ 
+-const freshNext = await openBridgeConnection({ url: bridge, target: destinations.next });
++const freshNext = await openBridgeConnection({ url: bridge, target: "next" });
+ openedConnections.push(freshNext);
+ const nextClient = freshNext.client(v1_1);
+ const oldClientOnNext = freshNext.client(v1_0);
+@@ -105,6 +105,6 @@
+ assert.equal(firstStreamResponse.value.serverLanguage, "v1.1.0");
+ 
+-const majorConnection = await openBridgeConnection({ url: bridge, target: destinations.major });
++const majorConnection = await openBridgeConnection({ url: bridge, target: "major" });
+ openedConnections.push(majorConnection);
+ const majorClient = majorConnection.client(v2_0);
+ const majorResponse = await majorClient.echo({ text: new TextEncoder().encode("major"), requestId: "separate-major" }, callOptions());
+@@ -152,7 +152,7 @@
+ // Rollback remains usable by clients at the restored version, while clients
+ // containing the additive API fail clearly until the v1.1 server returns.
+ const oldAfterRollback = await oldClient.echo({ text: "rollback-old-client", requestId: "rollback" }, callOptions());
+ assert.equal(oldAfterRollback.serverLanguage, "v1.0.0");
+-const rollbackDial = await openBridgeConnection({ url: bridge, target: destinations.old });
++const rollbackDial = await openBridgeConnection({ url: bridge, target: "old" });
+ openedConnections.push(rollbackDial);
+ const redialedOld = await rollbackDial.client(v1_0).echo({ text: "fresh-rollback-dial", requestId: "rollback" }, callOptions());

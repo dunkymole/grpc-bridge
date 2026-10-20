@@ -151,7 +151,7 @@ const thresholds: SmokeThresholds = {
 
 const tunnelURL = process.env.TUNNEL_URL ?? "ws://localhost:8080/tunnel";
 const metricsURL = process.env.METRICS_URL ?? "http://localhost:8080/metrics";
-const target = process.env.BENCH_TARGET;
+const target = process.env.BENCH_TARGET ?? "demo";
 const token = process.env.TUNNEL_TOKEN ?? "";
 const outputPath = resolve(
   process.env.BENCH_OUTPUT ?? `test-results/load/${profileName}.json`,

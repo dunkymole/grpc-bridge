@@ -4,7 +4,7 @@ import {
   type Transport,
 } from "@connectrpc/connect";
 import { RecoveringConnection } from "./recovery.js";
-import { openChannel } from "./channel.js";
+import { openChannel, targetLabel } from "./channel.js";
 import { createTunnelTransport } from "./transport.js";
 import type { RetryOptions } from "./retry.js";
 
@@ -28,10 +28,13 @@ const managedConnections = new WeakMap<object, RecoveringConnection>();
 export function managedClientTransport(
   owner: object,
   clientInterceptors: readonly Interceptor[] | undefined,
-  finalizeRequest: NonNullable<import("./interceptors.js").InterceptorOptions["finalizeRequest"]>,
+  finalizeRequest: NonNullable<
+    import("./interceptors.js").InterceptorOptions["finalizeRequest"]
+  >,
 ): Transport {
   const connection = managedConnections.get(owner);
-  if (!connection) throw new TypeError("Connection is not a managed bridge handle");
+  if (!connection)
+    throw new TypeError("Connection is not a managed bridge handle");
   return connection.clientTransport(clientInterceptors, finalizeRequest);
 }
 
@@ -50,13 +53,13 @@ export interface BridgeConnectionOptions {
   retry?: RetryOptions;
   /** Public ws:// or wss:// bridge endpoint. */
   url: string;
-  /** Exact backend host:port selected during the WebSocket handshake. */
+  /** Logical label resolved by bridge policy. Omit to use the server default. */
   target?: string;
   /** Static token or provider resolved once before each new channel is opened. */
   tunnelToken?: TokenSource;
   /** Optional static/provider token sent to the backend as Bearer metadata. */
   backendBearerToken?: TokenSource;
-  /** HTTP/2 :authority sent to the backend. Defaults to target, then "backend". */
+  /** HTTP/2 :authority sent to the backend. Defaults to the selected target label, then "backend". */
   authority?: string;
   /** HTTP/2 :scheme. This is metadata; upstream TLS remains bridge policy. */
   scheme?: "http" | "https";
@@ -80,6 +83,10 @@ async function resolveToken(source?: TokenSource): Promise<string | undefined> {
 export function createBridgeConnection(
   options: BridgeConnectionOptions,
 ): BridgeConnection {
+  const url = options.url;
+  const selectedLabel = targetLabel(url, options.target);
+  const authority = options.authority ?? selectedLabel ?? "backend";
+  const scheme = options.scheme;
   const connection = new RecoveringConnection(
     async (signal) => {
       const [tunnelToken, backendBearerToken] = await Promise.all([
@@ -87,8 +94,8 @@ export function createBridgeConnection(
         resolveToken(options.backendBearerToken),
       ]);
       signal.throwIfAborted();
-      const channel = await openChannel(options.url, tunnelToken ?? "", {
-        target: options.target,
+      const channel = await openChannel(url, tunnelToken ?? "", {
+        target: selectedLabel,
         signal,
       });
       try {
@@ -96,8 +103,8 @@ export function createBridgeConnection(
           channel,
           transport: createTunnelTransport(channel, {
             bearerToken: backendBearerToken,
-            authority: options.authority ?? options.target ?? "backend",
-            scheme: options.scheme,
+            authority,
+            scheme,
           }),
         };
       } catch (error) {
@@ -109,7 +116,7 @@ export function createBridgeConnection(
     options.retry,
     {
       interceptors: options.interceptors,
-      baseUrl: `${options.scheme ?? "http"}://${options.authority ?? options.target ?? "backend"}`,
+      baseUrl: `${scheme ?? "http"}://${authority}`,
     },
   );
   managedConnections.set(connection, connection);
@@ -155,6 +162,7 @@ export class SharedBridgeConnection {
   private readonly closing = new Set<Promise<void>>();
 
   constructor(options: BridgeConnectionOptions) {
+    targetLabel(options.url, options.target);
     // Snapshot configuration; token providers can still refresh credentials.
     this.options = {
       ...options,
