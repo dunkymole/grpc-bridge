@@ -31,6 +31,12 @@ npm SHA-512 integrity) are retained in `test-results/package/` and CI artifacts.
 This command **does not publish**; registry ownership, version/tag approval and
 verification through a clean installed consumer remain separate release gates.
 
+After auditing, `npm run package:consumer` installs those exact bytes into an
+isolated Docker consumer, regenerates a contract using the reviewed compiler,
+and exercises Node plus Chromium/Firefox/WebKit without source aliases. See the
+[consumer gate](https://github.com/dunkymole/grpc-bridge/blob/main/packaging/README.md)
+for prerequisites, retained reports and the distinction from server enforcement.
+
 Generate Protobuf-ES descriptors and a contract artifact from the same locked
 descriptor input with `proto-contract`. The generator validates the complete
 lock against that exact input, then emits the runtime graph described in

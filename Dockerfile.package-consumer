@@ -1,0 +1,33 @@
+ARG PROTO_CONTRACT_REVISION=6d028e3632e7b027f380cbc6b0449dfe4ca4b6c1
+FROM golang:1.27.1-alpine AS compiler
+ARG PROTO_CONTRACT_REVISION
+RUN apk add --no-cache git
+WORKDIR /compiler
+RUN git init && git remote add origin https://github.com/dunkymole/proto-contract.git && \
+    git fetch --depth=1 origin "$PROTO_CONTRACT_REVISION" && git checkout --detach FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = "$PROTO_CONTRACT_REVISION" && \
+    CGO_ENABLED=0 go build -trimpath -o /proto-contract ./cmd/proto-contract && \
+    CGO_ENABLED=0 go build -trimpath -o /protoc-gen-proto-contract ./cmd/protoc-gen-proto-contract
+
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+ARG PROTO_CONTRACT_REVISION
+ENV PROTO_CONTRACT_REVISION=$PROTO_CONTRACT_REVISION
+RUN apk add --no-cache protobuf=31.1-r1
+WORKDIR /app
+COPY packaging/consumer/package*.json ./
+COPY --from=package-artifact /package.tgz /artifact/package.tgz
+COPY --from=package-artifact /package-audit.json /artifact/package-audit.json
+COPY packaging/consumer/verify-artifact.mjs ./
+COPY web/scripts/artifact-install-lib.mjs ./
+RUN node verify-artifact.mjs && npm ci --ignore-scripts --no-audit --no-fund
+COPY --from=compiler /proto-contract /protoc-gen-proto-contract /usr/local/bin/
+COPY proto/demo.proto /proto/demo.proto
+COPY web/contracts/demo.contract.json contracts/demo.contract.json
+COPY packaging/consumer/bindings.json contracts/bindings.json
+COPY packaging/consumer/*.ts packaging/consumer/tsconfig.json packaging/consumer/build.mjs packaging/consumer/serve.mjs ./
+RUN mkdir gen && proto-contract check --proto /proto/demo.proto --proto-path /proto --service bridge.demo.v1.DemoService --lock contracts/demo.contract.json && \
+    protoc -I /proto --plugin=protoc-gen-es=./node_modules/.bin/protoc-gen-es --es_out=gen --es_opt=target=ts,import_extension=js \
+      --plugin=protoc-gen-proto-contract=/usr/local/bin/protoc-gen-proto-contract --proto-contract_out=. \
+      --proto-contract_opt=lang=typescript,bindings=contracts/bindings.json demo.proto && \
+    ./node_modules/.bin/tsc && node build.mjs
+CMD ["node", "serve.mjs"]
