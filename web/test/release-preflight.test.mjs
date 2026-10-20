@@ -146,3 +146,15 @@ test("preflight fails closed on missing, mismatched or partial evidence", () => 
     );
   }
 });
+test("registry preflight requires registry resolution, not a reused local installation", () => {
+  const f = fixture();
+  f.node.installSource = "registry";
+  f.browsers.installSource = "registry";
+  const options = { revision, compilerRevision, installSource: "registry" };
+  assert.throws(() => verifyReleaseEvidence(f, options));
+  f.node.installedResolution.resolved =
+    "https://registry.npmjs.org/@dunkymole/grpc-bridge/-/grpc-bridge-0.2.0.tgz";
+  assert.equal(verifyReleaseEvidence(f, options).installSource, "registry");
+  f.node.installedResolution.resolved = "https://example.com/other.tgz";
+  assert.throws(() => verifyReleaseEvidence(f, options));
+});
