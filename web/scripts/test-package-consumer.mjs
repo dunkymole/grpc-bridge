@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const output = join(root, "web/test-results/package");
+const output = resolve(
+  process.env.PACKAGE_EVIDENCE_DIR ?? join(root, "web/test-results/package"),
+);
 const audit = JSON.parse(
   await readFile(join(output, "package-audit.json"), "utf8"),
 );
@@ -20,7 +22,11 @@ assert.equal(
 );
 const staging = await mkdtemp(join(tmpdir(), "grpc-bridge-consumer-"));
 const project = "grpc-bridge-package-" + randomUUID().slice(0, 8);
-const env = { ...process.env, PACKAGE_ARTIFACT_DIR: staging };
+const env = {
+  ...process.env,
+  PACKAGE_ARTIFACT_DIR: staging,
+  PACKAGE_EVIDENCE_DIR: output,
+};
 const args = [
   "compose",
   "--project-name",

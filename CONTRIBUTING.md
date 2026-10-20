@@ -3,6 +3,9 @@
 Issues and pull requests are welcome. Start with the [README](README.md) and
 [architecture](docs/DESIGN.md).
 
+For version changes and package releases, follow the [release runbook](docs/RELEASING.md).
+Preparation and dry runs do not publish packages or tags.
+
 Documentation must be self-contained and describe the project's behavior,
 architecture, and operation for readers with no prior context.
 
