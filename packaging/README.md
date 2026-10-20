@@ -48,3 +48,9 @@ for strict server runtimes. This fixture does not replace that matrix or claim
 that every operating system/browser version is supported. No npm publication
 occurs; registry ownership, version/tag selection and explicit approval remain
 release-time gates.
+
+The [release procedure](../docs/RELEASING.md) adds a read-only preflight, clean
+source/toolchain provenance, installed public-entry bundle measurements and an
+explicit `PACKAGE_INSTALL_SOURCE=registry` post-publication verification mode.
+That mode validates the public registry bytes and uses a registry URL in npm's
+lock entry rather than the default local tarball; it is not a publisher.

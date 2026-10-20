@@ -73,6 +73,12 @@ try {
   assert.equal(node.status, "PASS");
   assert.equal(node.artifactSha256, audit.sha256);
   assert.equal(browsers.status, "PASS");
+  assert.equal(browsers.artifactSha256, audit.sha256);
+  assert.equal(
+    node.installSource,
+    process.env.PACKAGE_INSTALL_SOURCE ?? "local",
+  );
+  assert.equal(browsers.installSource, node.installSource);
   assert.deepEqual(
     browsers.results.map((result) => result.name),
     ["chromium", "firefox", "webkit"],

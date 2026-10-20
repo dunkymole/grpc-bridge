@@ -9,8 +9,8 @@ client.
 
 This change is an intentional pre-1.0 breaking release: package version `0.2.0`
 makes contract-bound clients the main entry point. Build a local tarball from
-`web/` with `npm ci && npm pack`, then install it alongside Connect 2.x and
-Protobuf-ES 2.15:
+`web/` with `npm ci && npm pack`, then install it alongside the tested Connect
+2.2.0 and Protobuf-ES 2.15.0 dependencies:
 
 ```sh
 npm install /path/to/dunkymole-grpc-bridge-0.2.0.tgz @connectrpc/connect@2.2.0 @bufbuild/protobuf@2.15.0
@@ -37,6 +37,11 @@ and exercises Node plus Chromium/Firefox/WebKit without source aliases. See the
 [consumer gate](https://github.com/dunkymole/grpc-bridge/blob/main/packaging/README.md)
 for prerequisites, retained reports and the distinction from server enforcement.
 
+The [release procedure](https://github.com/dunkymole/grpc-bridge/blob/main/docs/RELEASING.md)
+records support/dependency/wire/retry boundaries, size evidence and the explicit
+ownership/version/tag/publication approval gates. For a published release, use
+its approved `@dunkymole/grpc-bridge@VERSION` coordinate in place of the tarball.
+
 Generate Protobuf-ES descriptors and a contract artifact from the same locked
 descriptor input with `proto-contract`. The generator validates the complete
 lock against that exact input, then emits the runtime graph described in
@@ -48,6 +53,11 @@ artifact; a lock file alone is not treated as schema validation. The checked-in
 
 The first lock can be created from the demo proto, then regenerated together
 with the service descriptor:
+
+These commands run from the repository's `web/` demo checkout, not the installed
+package: published artifacts intentionally exclude demo proto/binding fixtures.
+Standalone applications supply their own proto, lock and bindings, as exercised
+by the isolated consumer gate.
 
 ```sh
 proto-contract snapshot --proto ../proto/demo.proto --proto-path ../proto \

@@ -12,11 +12,26 @@ const manifest = JSON.parse(
     { encoding: "utf8" },
   ),
 );
-// Bind the one local-file dependency to the audited bytes while preserving every
-// checked-in external dependency resolution/integrity. No registry bridge lookup.
+// Default to the audited local file; the explicit registry mode is a read-only
+// post-publication gate. Preserve every external dependency resolution/integrity.
 const consumer = JSON.parse(await readFile("package.json", "utf8"));
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
-const bound = bindAuditedArtifact(consumer, lock, manifest, report, bytes);
+const installSource = process.env.PACKAGE_INSTALL_SOURCE ?? "local";
+let registryMetadata;
+if (installSource === "registry") {
+  const response = await fetch(
+    `https://registry.npmjs.org/@dunkymole%2fgrpc-bridge/${encodeURIComponent(report.version)}`,
+  );
+  if (!response.ok)
+    throw new Error(
+      `Public registry verification failed: HTTP ${response.status}`,
+    );
+  registryMetadata = await response.json();
+}
+const bound = bindAuditedArtifact(consumer, lock, manifest, report, bytes, {
+  installSource,
+  registryMetadata,
+});
 await writeFile("package.json", JSON.stringify(bound.consumer, null, 2));
 await writeFile("package-lock.json", JSON.stringify(bound.lock, null, 2));
 console.log(

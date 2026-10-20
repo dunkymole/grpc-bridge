@@ -81,6 +81,10 @@ The reusable package is prepared as `@dunkymole/grpc-bridge` but is not yet
 published to npm. Follow the [local installation steps](web/README.md#install)
 to use the package imports below in your own project. Generate your service
 descriptors with Protobuf-ES; demo descriptors are not included in the package.
+
+The [artifact consumer gate](packaging/README.md) and
+[release procedure](docs/RELEASING.md) verify installed-package behavior and
+retained checksums; publication still requires explicit owner approval.
 See its
 [API and compatibility guide](web/README.md), the
 [runnable TypeScript examples](web/examples/client.ts), and the
