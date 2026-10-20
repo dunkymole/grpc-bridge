@@ -71,6 +71,7 @@ jobs:
           docker compose --project-name "grpc-bridge-browser-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -f compose.yaml -f compose.browser.yaml logs --no-color || true
           docker compose --project-name "grpc-bridge-browser-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -f compose.yaml -f compose.browser.yaml down --remove-orphans || true
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: python3 scripts/release.py check
       - run: bash scripts/run-autobahn.sh
       - if: always()
         run: |

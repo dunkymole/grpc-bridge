@@ -54,3 +54,9 @@ source/toolchain provenance, installed public-entry bundle measurements and an
 explicit `PACKAGE_INSTALL_SOURCE=registry` post-publication verification mode.
 That mode validates the public registry bytes and uses a registry URL in npm's
 lock entry rather than the default local tarball; it is not a publisher.
+
+The root `python scripts/release.py` command reuses this gate for checked candidate
+preparation, explicit promotion and verification. `PACKAGE_EVIDENCE_DIR` selects a
+separate evidence directory for registry checks, preserving the approved candidate.
+Preflight supports `--read-only` when inspecting retained reports and
+`--compiler-revision <sha>` to check the reviewed pin from the selected source.

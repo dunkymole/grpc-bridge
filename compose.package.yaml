@@ -23,7 +23,7 @@ services:
       TUNNEL_URL: ws://bridge:8080/tunnel
       TUNNEL_TOKEN: package-consumer-local-test-token
     volumes:
-      - ./web/test-results/package:/results
+      - ${PACKAGE_EVIDENCE_DIR:-./web/test-results/package}:/results
     depends_on:
       bridge:
         condition: service_healthy
@@ -39,7 +39,7 @@ services:
     environment:
       TUNNEL_TOKEN: package-consumer-local-test-token
     volumes:
-      - ./web/test-results/package:/results
+      - ${PACKAGE_EVIDENCE_DIR:-./web/test-results/package}:/results
     depends_on:
       package-consumer:
         condition: service_healthy

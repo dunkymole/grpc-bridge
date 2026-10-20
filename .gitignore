@@ -11,3 +11,4 @@ bin/
 *.key
 test-results/
 *.tgz
+artifacts/

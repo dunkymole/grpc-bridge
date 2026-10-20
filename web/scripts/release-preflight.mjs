@@ -8,6 +8,8 @@ import { verifyReleaseEvidence } from "./release-preflight-lib.mjs";
 const { values } = parseArgs({
   options: {
     revision: { type: "string" },
+    "compiler-revision": { type: "string" },
+    "read-only": { type: "boolean", default: false },
     directory: { type: "string", default: "test-results/package" },
   },
 });
@@ -42,10 +44,11 @@ const workflow = await readFile(
   ),
   "utf8",
 );
-const compilerRevision = workflow.match(
-  /PROTO_CONTRACT_REVIEWED_REF:\s*([a-f0-9]{40})/,
-)?.[1];
+const compilerRevision =
+  values["compiler-revision"] ??
+  workflow.match(/PROTO_CONTRACT_REVIEWED_REF:\s*([a-f0-9]{40})/)?.[1];
 assert.ok(compilerRevision, "reviewed compiler pin missing from CI");
+assert.match(compilerRevision, /^[a-f0-9]{40}$/);
 const result = verifyReleaseEvidence(
   {
     audit,
@@ -61,8 +64,9 @@ const result = verifyReleaseEvidence(
     installSource: process.env.PACKAGE_INSTALL_SOURCE ?? "local",
   },
 );
-await writeFile(
-  join(directory, "release-preflight.json"),
-  JSON.stringify(result, null, 2) + "\n",
-);
+if (!values["read-only"])
+  await writeFile(
+    join(directory, "release-preflight.json"),
+    JSON.stringify(result, null, 2) + "\n",
+  );
 console.log(JSON.stringify(result, null, 2));
