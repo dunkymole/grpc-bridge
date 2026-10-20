@@ -149,7 +149,9 @@ class ReleaseTests(unittest.TestCase):
                 return {'tree': {'sha': TREE}} if path.startswith('git/commits') else data
             def source(commit, name):
                 return {r.WORKFLOW: f'PROTO_CONTRACT_REVIEWED_REF: {COMPILER}'.encode(),
-                        'web/package.json': json.dumps({'version': V}).encode(), 'web/package-lock.json': b'lock'}[name]
+                        'web/package.json': json.dumps({'version': V, 'dependencies': {'@connectrpc/connect': '2.2.0'},
+                                                        'engines': {'node': '>=24'}}).encode(),
+                        'web/package-lock.json': b'lock'}[name]
             with tempfile.TemporaryDirectory() as temp, patch.object(r, 'ci_candidate', return_value=(info, artifact)), \
                     patch.object(r, 'api', side_effect=api), patch.object(r, 'source_file', side_effect=source), \
                     patch.object(r, 'preflight') as preflight:

@@ -85,12 +85,13 @@ def registry(suffix='', optional=False):
 
 
 def check_versions(root=ROOT):
-    package = json.loads((root / 'web/package.json').read_text())
-    lock = json.loads((root / 'web/package-lock.json').read_text())
+    package = json.loads((root / 'web/package.json').read_text(encoding='utf-8'))
+    lock = json.loads((root / 'web/package-lock.json').read_text(encoding='utf-8'))
     v = version(package['version'])
     require(package['name'] == lock['name'] == lock['packages']['']['name'] == PACKAGE, 'package name drift')
     require(lock['version'] == lock['packages']['']['version'] == v, 'package-lock version drift')
-    examples = re.findall(r'/path/to/dunkymole-grpc-bridge-([\d.]+)\.tgz', (root / 'web/README.md').read_text())
+    examples = re.findall(r'/path/to/dunkymole-grpc-bridge-([\d.]+)\.tgz',
+                          (root / 'web/README.md').read_text(encoding='utf-8'))
     require(examples == [v], 'current installation example version drift')
     return v
 
@@ -130,16 +131,16 @@ def bump(v, commit, summary, dry_run=False):
     edits = {}
     for name in ('web/package.json', 'web/package-lock.json'):
         path = ROOT / name
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding='utf-8'))
         data['version'] = v
         if 'packages' in data:
             data['packages']['']['version'] = v
         edits[path] = json.dumps(data, indent=2) + '\n'
     path = ROOT / 'web/README.md'
-    edits[path] = path.read_text().replace(f'/path/to/dunkymole-grpc-bridge-{current}.tgz',
+    edits[path] = path.read_text(encoding='utf-8').replace(f'/path/to/dunkymole-grpc-bridge-{current}.tgz',
                                           f'/path/to/dunkymole-grpc-bridge-{v}.tgz')
     path = ROOT / 'CHANGELOG.md'
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     require(f'\n## {v}\n' not in text, 'changelog entry already exists')
     require(text.count('## Unreleased\n') == 1, 'missing or duplicate Unreleased heading')
     edits[path] = text.replace('## Unreleased\n', f'## Unreleased\n\n## {v}\n\n- {summary.strip()}\n', 1)
@@ -208,11 +209,12 @@ def extract_candidate(data, destination):
         return audit
 
 
-def notes(v, commit, run_id, artifact_id):
+def notes(v, commit, run_id, artifact_id, package):
+    dependencies = ', '.join(f'{name} {bound}' for name, bound in sorted(package['dependencies'].items()))
     return f'''# gRPC Bridge v{v}
 
-Install: `npm install {PACKAGE}@{v}` (Node >=24, ESM).
-Connect 2.2.0 / Protobuf-ES 2.15.0; generated contracts required.
+Install: `npm install {PACKAGE}@{v}` (Node {package['engines']['node']}, ESM).
+Dependencies: {dependencies}; generated contracts required.
 Package/API contract/tunnel versions are independent. Wire: `grpc-tunnel.v1`.
 Retry/recovery semantics are unchanged; see the source-tagged compatibility guide.
 
@@ -244,7 +246,8 @@ def prepare(v, commit, run_id, artifact_id, out):
         require(audit['source']['tree'] == api(f'git/commits/{commit}')['tree']['sha'], 'source tree mismatch')
         workflow = source_file(commit, WORKFLOW).decode()
         compiler = re.search(r'PROTO_CONTRACT_REVIEWED_REF:\s*([a-f0-9]{40})', workflow)[1]
-        require(json.loads(source_file(commit, 'web/package.json'))['version'] == v, 'source version mismatch')
+        package = json.loads(source_file(commit, 'web/package.json'))
+        require(package['version'] == v, 'source version mismatch')
         require(audit['packageLockSha256'] == sha(source_file(commit, 'web/package-lock.json')), 'source dependency lock mismatch')
         preflight(stage, commit, compiler)
         candidate = {'format': 1, 'repository': REPO, 'version': v, 'sourceRevision': commit,
@@ -252,10 +255,11 @@ def prepare(v, commit, run_id, artifact_id, out):
                      'workflowRunId': run_id, 'workflowAttempt': info['run_attempt'], 'artifactId': artifact_id,
                      'artifactDigest': artifact['digest'], 'toolchain': audit['toolchain']}
         (stage / 'candidate.json').write_text(json.dumps(candidate, indent=2) + '\n', encoding='utf-8', newline='\n')
-        (stage / 'RELEASE_NOTES.md').write_text(notes(v, commit, run_id, artifact_id), encoding='utf-8', newline='\n')
+        (stage / 'RELEASE_NOTES.md').write_text(notes(v, commit, run_id, artifact_id, package), encoding='utf-8', newline='\n')
         sums = ''.join(f'{sha(p.read_bytes())}  {p.name}\n' for p in sorted(stage.iterdir()))
         (stage / 'SHA256SUMS').write_text(sums, encoding='utf-8', newline='\n')
-        shutil.move(stage, out)
+        require(not out.exists(), 'output appeared during preparation; choose a fresh directory')
+        stage.rename(out)
     return candidate
 
 
