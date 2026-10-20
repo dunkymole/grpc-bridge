@@ -126,7 +126,11 @@ trusted-publisher provenance.
 
 Query the approved version and dist-tag from the explicit public registry.
 Require the tag to resolve to the approved version and `dist.integrity` to match
-the candidate. Preserve the original evidence, then run:
+the candidate. Preserve an independent copy of the original candidate reports.
+Stage copies of the approved tarball and `package-audit.json` under
+`web/test-results/package/`; the consumer reads that directory and replaces its
+Node/browser working reports. Do not use your sole evidence copy as that working
+directory. Then run:
 
 ```sh
 PACKAGE_INSTALL_SOURCE=registry npm run package:consumer
