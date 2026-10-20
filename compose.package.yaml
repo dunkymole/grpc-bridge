@@ -1,0 +1,44 @@
+services:
+  backend:
+    extends:
+      file: compose.yaml
+      service: backend
+  bridge:
+    extends:
+      file: compose.yaml
+      service: bridge
+    ports: !reset []
+    environment:
+      ALLOWED_ORIGIN: http://package-consumer:8081
+      TUNNEL_TOKEN: package-consumer-local-test-token
+  package-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.package-consumer
+      additional_contexts:
+        package-artifact: ${PACKAGE_ARTIFACT_DIR:?Run npm run package:consumer}
+    environment:
+      TUNNEL_URL: ws://bridge:8080/tunnel
+      TUNNEL_TOKEN: package-consumer-local-test-token
+    volumes:
+      - ./web/test-results/package:/results
+    depends_on:
+      bridge:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  package-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile.package-browsers
+    environment:
+      TUNNEL_TOKEN: package-consumer-local-test-token
+    volumes:
+      - ./web/test-results/package:/results
+    depends_on:
+      package-consumer:
+        condition: service_healthy
+    shm_size: 1gb

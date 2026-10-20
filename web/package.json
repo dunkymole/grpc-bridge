@@ -62,6 +62,7 @@
     "build:demo": "tsc --noEmit && node build.mjs",
     "test": "tsx --test test/*.test.ts test/*.test.mjs",
     "package:verify": "node scripts/verify-tarball.mjs",
+    "package:consumer": "node scripts/test-package-consumer.mjs",
     "test:e2e": "tsx --test test/*.e2e.ts",
     "contracts:verify": "node scripts/verify-contract-fixture.mjs",
     "test:browser": "playwright test -c playwright.config.ts",
