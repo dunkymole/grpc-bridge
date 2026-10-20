@@ -87,13 +87,13 @@ func TestAdmissionOutageDuringEstablishedTraffic(t *testing.T) {
 					http.Error(w, "unavailable", 503)
 					return
 				}
-				_ = json.NewEncoder(w).Encode(admissionResponse{Version: 1, Subject: "healthy", Target: target, ExpiresAt: time.Now().Add(time.Minute).Unix()})
+				_ = json.NewEncoder(w).Encode(admissionResponse{Version: 1, Subject: "healthy", Target: "demo", ExpiresAt: time.Now().Add(time.Minute).Unix()})
 			}))
 			defer admission.Close()
-			g := newGateway(config{upstream: target, admissionURL: admission.URL, maxConnections: 32, maxPerPrincipal: 2, maxGrantLifetime: 2 * time.Minute, maxTunnelLifetime: time.Minute})
+			g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, target, false), admissionURL: admission.URL, maxConnections: 32, maxPerPrincipal: 2, maxGrantLifetime: 2 * time.Minute, maxTunnelLifetime: time.Minute})
 			server := httptest.NewServer(g)
 			defer server.Close()
-			conn, reader, response := rawHandshake(t, server.URL, target, "healthy")
+			conn, reader, response := rawHandshake(t, server.URL, "demo", "healthy")
 			defer conn.Close()
 			if response.StatusCode != 101 {
 				t.Fatal(response.Status)
@@ -104,7 +104,7 @@ func TestAdmissionOutageDuringEstablishedTraffic(t *testing.T) {
 				workers.Add(1)
 				go func() {
 					defer workers.Done()
-					failed, _, response := rawHandshake(t, server.URL, target, "new")
+					failed, _, response := rawHandshake(t, server.URL, "demo", "new")
 					defer failed.Close()
 					defer response.Body.Close()
 					if response.StatusCode != 503 {
@@ -130,7 +130,7 @@ func TestAdmissionOutageDuringEstablishedTraffic(t *testing.T) {
 				t.Fatal(err)
 			}
 			outage.Store(false)
-			replacement, replacementReader, response := rawHandshake(t, server.URL, target, "recovered")
+			replacement, replacementReader, response := rawHandshake(t, server.URL, "demo", "recovered")
 			defer replacement.Close()
 			if response.StatusCode != 101 {
 				t.Fatalf("admission failed after recovery: %s", response.Status)
@@ -147,12 +147,12 @@ func TestAdmissionOutageDuringEstablishedTraffic(t *testing.T) {
 
 func TestTunnelLifetimeExpiresDuringContinuousTraffic(t *testing.T) {
 	target, _ := loadEchoBackend(t)
-	g := newGateway(config{upstream: target, token: "token", maxConnections: 4, maxPerPrincipal: 1, maxTunnelLifetime: 500 * time.Millisecond})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, target, false), token: "token", maxConnections: 4, maxPerPrincipal: 1, maxTunnelLifetime: 500 * time.Millisecond})
 	server := httptest.NewServer(g)
 	defer server.Close()
 	for cycle := 0; cycle < 3; cycle++ {
 		started := time.Now()
-		conn, reader, response := rawHandshake(t, server.URL, target, "token")
+		conn, reader, response := rawHandshake(t, server.URL, "demo", "token")
 		t.Cleanup(func() { conn.Close() })
 		if response.StatusCode != 101 {
 			conn.Close()

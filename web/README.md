@@ -81,7 +81,7 @@ import { contract as OrdersContract } from "./gen/orders_contract.js";
 
 const connection = await openBridgeConnection({
   url: "wss://bridge.example.com/tunnel",
-  target: "orders.internal:443",
+  target: "orders",
   tunnelToken: async () => session.accessToken,
   backendBearerToken: async () => session.backendToken,
 });
@@ -93,6 +93,23 @@ try {
   await connection.close();
 }
 ```
+
+`target` is a logical label chosen from the bridge operator's policy. For example,
+the bridge can map labels to private service addresses in `config/targets.json`:
+
+```json
+{
+  "targets": {
+    "demo": { "address": "python-demo:50051", "tls": false },
+    "orders": { "address": "orders.internal:443", "tls": true }
+  }
+}
+```
+
+Set the bridge's `DEFAULT_TARGET=orders` if callers that omit `target` should use
+the orders service; the default is `demo`. The client sends only the label and
+cannot override its mapped address or TLS setting. This replaces the earlier
+address-based `target` API; see the [routing and migration details](../docs/CONFIGURATION.md#destination-policy-live).
 
 The inferred client contains only methods from the generated service. The
 artifact binds its Protobuf-ES service descriptor, canonical API/version, full
@@ -131,7 +148,7 @@ const clientLabel: Interceptor = (next) => async (request) => {
 };
 const connection = await openBridgeConnection({
   url: "wss://bridge.example.com/tunnel",
-  target: "orders.internal:443",
+  target: "orders",
   interceptors: [trace],
 });
 const orders = connection.client(OrdersContract, {
@@ -157,7 +174,7 @@ import { contract as OrdersContract } from "./gen/orders_contract.js";
 
 const shared = createSharedBridgeConnection({
   url: "wss://bridge.example.com/tunnel",
-  target: "orders.internal:443",
+  target: "orders",
 }); // Opens lazily when acquired.
 
 const lease = await shared.acquire();
@@ -177,7 +194,7 @@ active leases. Stop using a lease before releasing it. State values are
 
 `createBridgeConnection()` returns immediately and recovers through initial
 outages. `openBridgeConnection()` waits for the first connection attempt and
-closes on failure. Both accept `url`, optional `target`, `tunnelToken`,
+closes on failure. Both accept `url`, optional logical-label `target`, `tunnelToken`,
 `backendBearerToken`, `authority`, `scheme`, `interceptors`, `retry`, and
 `onStateChange`. Token providers run before each new physical connection. See
 [`RETRIES.md`](RETRIES.md) for retry evidence, retry policies, and request
@@ -201,6 +218,11 @@ application contracts. The generator's full-lock validation and the runtime's
 descriptor projection are complementary checks.
 
 ## Migration from 0.1.x
+
+The bridge target option also changed from a backend `host:port` to a logical
+label. Select a label such as `orders` and configure the label-to-address mapping
+on the bridge; the [routing guide](../docs/CONFIGURATION.md#destination-policy-live)
+describes the migration from address-keyed policies and `UPSTREAM` settings.
 
 The main entry no longer exports `connection.transport`, `createTunnelTransport`,
 `interceptTransport`, or generic `createClient` setup. Replace:

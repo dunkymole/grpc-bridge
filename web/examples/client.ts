@@ -7,10 +7,10 @@ import { inputQueue } from "../src/queue.js";
 export async function connectDemo(
   gatewayUrl: string,
   tunnelToken = "",
-  target = "python-demo:50051",
+  target = "demo",
   options: { forwardToken?: boolean } = {},
 ) {
-  // The bridge authorizes and resolves this host:port before HTTP/2 starts.
+  // The bridge authorizes this label and resolves its address before HTTP/2 starts.
   const connection = await openBridgeConnection({
     url: gatewayUrl,
     target,
@@ -26,7 +26,7 @@ export async function runExamples(
   gatewayUrl: string,
   tunnelToken = "",
   log: (message: string) => void = console.log,
-  target = "python-demo:50051",
+  target = "demo",
   options: { forwardToken?: boolean } = {},
 ) {
   const { client, close } = await connectDemo(

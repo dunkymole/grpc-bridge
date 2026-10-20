@@ -1,14 +1,12 @@
 import type { Interceptor } from "@connectrpc/connect";
-import {
-  createSharedBridgeConnection,
-} from "../src/index.js";
+import { createSharedBridgeConnection } from "../src/index.js";
 import { contract as DemoContract } from "../src/gen/demo_contract.js";
 
 /** Two client-specific chains and a shared default, using only public bridge APIs. */
 export async function runInterceptorExample(
   url: string,
   tunnelToken = "",
-  target = "python-demo:50051",
+  target = "demo",
   log: (message: string) => void = console.log,
 ) {
   const defaults: Interceptor = (next) => async (req) => {

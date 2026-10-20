@@ -23,6 +23,10 @@ CI repeats the integration suite and examples after enabling tunnel-token
 authentication. Locally, two rejection tests skip when `TUNNEL_TOKEN` is empty.
 Run tests against a Compose stack started from the same checkout: routing tests
 edit that checkout's `config/targets.json`, which must be the mounted policy file.
+Routing coverage includes label validation, rejection of raw addresses, default
+label lookup, live remapping and removal, and established tunnels retaining their
+original backend. Admission tests bind grants to labels; TLS tests verify the
+mapped backend hostname.
 
 Retry tests use a real Node HTTP/2 server to inject refusals, GOAWAY, socket loss,
 and retryable statuses. Five cases compare behavior with `@grpc/grpc-js`. See the
@@ -83,6 +87,11 @@ revision being reviewed. The workflow has read-only repository permissions and
 does not expose repository secrets to these builds. Proto Contract's own release
 workflow performs the reciprocal check: proposed proto/lock changes against a
 fixed reviewed bridge commit.
+
+The pinned peer fixtures still use address-based routing. This job applies a
+[fixture migration](../test/proto-contract/README.md) to their target policies,
+client target options, and default-target settings before running the matrix and
+rollout. Their RPC assertions remain unchanged.
 
 ## WebSocket conformance checks
 

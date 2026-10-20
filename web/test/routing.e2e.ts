@@ -10,7 +10,7 @@ import { DemoService } from "../src/gen/demo_pb.js";
 const docker = (...args: string[]) =>
   execFileSync("docker", args, { encoding: "utf8", timeout: 20000 }).trim();
 test(
-  "onboard a new backend without restarting the bridge",
+  "onboard, remap, and revoke a target label without restarting the bridge",
   { timeout: 60000 },
   async () => {
     const root = new URL("../../", import.meta.url);
@@ -33,34 +33,76 @@ test(
       ),
     )[0];
     const image = docker("inspect", backend, "--format", "{{.Image}}");
-    const name = `grpc-bridge-onboarding-${process.pid}`;
-    const target = `${name}:50051`;
+    const firstName = `grpc-bridge-onboarding-${process.pid}`;
+    const secondName = `grpc-bridge-remap-${process.pid}`;
+    const target = `onboard-${process.pid}`;
     const policyFile = new URL("config/targets.json", root);
     const original = await readFile(policyFile, "utf8");
     const url = process.env.TUNNEL_URL ?? "ws://localhost:8080/tunnel";
     const token = process.env.TUNNEL_TOKEN ?? "";
     const existing = await openChannel(url, token);
-    let selected: Awaited<ReturnType<typeof openChannel>> | undefined;
-    let created = false;
+    let first: Awaited<ReturnType<typeof openChannel>> | undefined;
+    let second: Awaited<ReturnType<typeof openChannel>> | undefined;
+    const created: string[] = [];
     try {
-      docker("run", "-d", "--name", name, "--network", network, image);
-      created = true;
-      docker(
-        "exec",
-        name,
-        "python",
-        "-c",
-        "import grpc; grpc.channel_ready_future(grpc.insecure_channel('localhost:50051')).result(timeout=10)",
-      );
+      const remappedServer = [
+        "import asyncio",
+        "import server",
+        "class Remapped(server.Demo):",
+        "    async def Echo(self, request, context):",
+        "        response = await super().Echo(request, context)",
+        "        response.text = 'remapped:' + response.text",
+        "        return response",
+        "server.Demo = Remapped",
+        "asyncio.run(server.main())",
+      ].join("\n");
+      for (const name of [firstName, secondName]) {
+        docker(
+          "run",
+          "-d",
+          "--name",
+          name,
+          "--network",
+          network,
+          image,
+          ...(name === secondName ? ["python", "-c", remappedServer] : []),
+        );
+        created.push(name);
+        docker(
+          "exec",
+          name,
+          "python",
+          "-c",
+          "import grpc; grpc.channel_ready_future(grpc.insecure_channel('localhost:50051')).result(timeout=10)",
+        );
+      }
       await assert.rejects(openChannel(url, token, { target }));
       const policy = JSON.parse(original);
-      policy.targets[target] = { tls: false };
+      policy.targets[target] = { address: `${firstName}:50051`, tls: false };
       await writeFile(policyFile, JSON.stringify(policy));
-      selected = await openChannel(url, token, { target });
-      const client = createClient(DemoService, createTunnelTransport(selected));
+      first = await openChannel(url, token, { target });
+      const firstClient = createClient(
+        DemoService,
+        createTunnelTransport(first),
+      );
       assert.equal(
-        (await client.echo({ text: "new backend" })).text,
+        (await firstClient.echo({ text: "new backend" })).text,
         "new backend",
+      );
+      policy.targets[target] = { address: `${secondName}:50051`, tls: false };
+      await writeFile(policyFile, JSON.stringify(policy));
+      second = await openChannel(url, token, { target });
+      const secondClient = createClient(
+        DemoService,
+        createTunnelTransport(second),
+      );
+      assert.equal(
+        (await secondClient.echo({ text: "remapped backend" })).text,
+        "remapped:remapped backend",
+      );
+      assert.equal(
+        (await firstClient.echo({ text: "first tunnel survives remap" })).text,
+        "first tunnel survives remap",
       );
       assert.equal(
         compose("ps", "-q", "bridge"),
@@ -70,8 +112,13 @@ test(
       await writeFile(policyFile, original);
       await assert.rejects(openChannel(url, token, { target }));
       assert.equal(
-        (await client.echo({ text: "existing target connection" })).text,
-        "existing target connection",
+        (await firstClient.echo({ text: "first tunnel survives revoke" })).text,
+        "first tunnel survives revoke",
+      );
+      assert.equal(
+        (await secondClient.echo({ text: "second tunnel survives revoke" }))
+          .text,
+        "remapped:second tunnel survives revoke",
       );
       assert.equal(
         (
@@ -82,10 +129,9 @@ test(
         "original connection",
       );
     } finally {
-      selected?.close();
-      existing.close();
+      await Promise.all([first?.close(), second?.close(), existing.close()]);
       await writeFile(policyFile, original);
-      if (created) docker("rm", "-f", name);
+      for (const name of created) docker("rm", "-f", name);
     }
   },
 );

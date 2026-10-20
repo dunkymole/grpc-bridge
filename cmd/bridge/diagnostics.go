@@ -24,15 +24,9 @@ func diagnosticFailure(stage, message string, secure bool, code int) (diagnostic
 
 func diagnosticDestination(c config, target string) (string, bool, bool) {
 	if target == "" {
-		target = c.upstream
+		target = c.defaultTarget
 	}
-	if !validDestination(target) {
-		return "", false, false
-	}
-	if target == c.upstream {
-		return target, c.upstreamTLS, true
-	}
-	if c.targetsFile == "" {
+	if !validTargetLabel(target) {
 		return "", false, false
 	}
 	policy, err := readTargetPolicy(c.targetsFile)
@@ -40,7 +34,7 @@ func diagnosticDestination(c config, target string) (string, bool, bool) {
 		return "", false, false
 	}
 	entry, ok := policy[target]
-	return target, entry.TLS, ok
+	return entry.Address, entry.TLS, ok
 }
 
 type diagnosticResolver interface {

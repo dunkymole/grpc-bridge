@@ -1,3 +1,6 @@
 * text=auto eol=lf
 *.png binary
 *.zip binary
+
+# Unified patches contain single-space lines representing blank context lines.
+test/proto-contract/*.patch -whitespace

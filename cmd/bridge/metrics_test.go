@@ -45,7 +45,7 @@ func TestFailedDialAndRejectionMetrics(t *testing.T) {
 	}
 	address := listener.Addr().String()
 	listener.Close()
-	g := newGateway(config{upstream: address, maxConnections: 1})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, address, false), maxConnections: 1})
 	w := httptest.NewRecorder()
 	g.ServeHTTP(w, request())
 	if w.Code != 502 {

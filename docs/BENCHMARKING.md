@@ -178,7 +178,7 @@ All overrides are positive integers except counts explicitly allowing zero:
 | `BENCH_OUTPUT` | `test-results/load/<profile>.json` | same | JSON result path. |
 | `TUNNEL_URL` | `ws://localhost:8080/tunnel` | same | Public bridge endpoint. |
 | `METRICS_URL` | `http://localhost:8080/metrics` | same | Bridge metrics endpoint. |
-| `BENCH_TARGET` | unset | unset | Optional allowlisted backend target. |
+| `BENCH_TARGET` | unset | unset | Optional configured logical backend label. |
 
 Thresholds can be changed with `BENCH_MAX_ERRORS`, `BENCH_MAX_P99_MS`,
 `BENCH_MAX_GOROUTINE_GROWTH`, `BENCH_MAX_HEAP_GROWTH_BYTES`, and

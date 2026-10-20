@@ -1,5 +1,5 @@
 {
   "targets": {
-    "python-demo:50051": { "tls": false }
+    "demo": { "address": "python-demo:50051", "tls": false }
   }
 }

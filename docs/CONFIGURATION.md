@@ -9,16 +9,17 @@ operated admission service; the two modes are mutually exclusive.
 ## Bridge process settings
 
 Flags override environment values. Empty environment values use the default,
-except `TUNNEL_TOKEN`, where empty disables authentication. These settings are
-read at process startup; changing them requires restarting/recreating the bridge.
+except `TUNNEL_TOKEN`, where empty disables authentication. Environment and flag
+settings are read at process startup; changing them requires restarting/recreating
+the bridge. The contents of `TARGETS_FILE` are reread for each new tunnel.
 
 | Environment variable | Flag               | Binary default          | Meaning                                                                                                                                                   |
 | -------------------- | ------------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LISTEN`             | `-listen`          | `127.0.0.1:8080`        | HTTP listener. Image sets `0.0.0.0:8080`; Compose publishes only host loopback.                                                                           |
 | `HEALTH_LISTEN`      | `-health-listen`   | `127.0.0.1:8082`        | Private plaintext HTTP listener for health probes. Keep it on loopback or a private network; it is not published by Compose.                              |
 | `DRAIN_GRACE_PERIOD` | `-drain-grace-period` | `30s`                | Maximum time to finish active tunnels after the first shutdown signal; must be nonnegative and at most 10 minutes. A second signal forces immediate closure. |
-| `UPSTREAM`           | `-upstream`        | `127.0.0.1:50051`       | Default, implicitly allowed destination. Compose sets `backend:50051`.                                                                                    |
-| `TARGETS_FILE`       | `-targets-file`    | empty                   | JSON destination policy path. Compose sets `/config/targets.json`.                                                                                        |
+| `DEFAULT_TARGET`     | `-default-target`  | `demo`                  | Default logical target label; it must exist in the target policy.                                                                                        |
+| `TARGETS_FILE`       | `-targets-file`    | `config/targets.json` (image: `/config/targets.json`) | JSON label-to-backend policy path. Compose sets `/config/targets.json`.                                      |
 | `ALLOWED_ORIGIN`     | `-origin`          | `http://localhost:8080` | Exact permitted browser Origin, including scheme and port. Native clients may omit Origin.                                                                |
 | `TUNNEL_TOKEN`       | none               | empty                   | Optional shared token. Only letters, digits, `_`, and `-` are accepted. Never log or commit it.                                                           |
 | none                 | `-max-connections` | `256`                   | Maximum concurrent tunnels, including connection establishment; must be positive.                                                                         |
@@ -28,10 +29,12 @@ read at process startup; changing them requires restarting/recreating the bridge
 | `MAX_TUNNEL_LIFETIME` | `-max-tunnel-lifetime` | `1h` | Maximum time any tunnel may remain open, even if its admission grant lasts longer; Go duration, positive and at most 24h. |
 | `TLS_CERT`           | `-tls-cert`        | empty                   | PEM certificate file enabling HTTPS/WSS.                                                                                                                  |
 | `TLS_KEY`            | `-tls-key`         | empty                   | Corresponding PEM private key file. Required when a certificate is supplied.                                                                              |
-| `UPSTREAM_TLS`       | `-upstream-tls`    | `false`                 | Environment enables TLS only for literal `true`; verifies default backend certificate and requires `h2` ALPN.                                             |
 | `ASSETS`             | `-assets`          | `web/dist`              | Demo asset directory. Image sets `/web`.                                                                                                                  |
 | none                 | `-check-config`    | `false`                 | Validate effective configuration offline and exit; no listeners, DNS lookups, or backend/admission requests. |
 | none                 | `-healthcheck`     | `false`                 | Probe `http://HEALTH_LISTEN/readyz` with a two-second timeout and exit. Uses the configured private health listener, including when the public listener uses TLS. |
+| none                 | `-diagnose`        | `false`                 | Check the default backend's connectivity and exit with a JSON report; mutually exclusive with `-check-config` and `-healthcheck`. |
+| none                 | `-diagnostic-target` | empty (uses `DEFAULT_TARGET`) | Logical label to diagnose; requires `-diagnose`. |
+| none                 | `-diagnostic-timeout` | `5s`                  | Overall diagnostic deadline, at most 1m; requires `-diagnose`. |
 | none                 | `-h`, `-help`      | n/a                     | Print Go flag help.                                                                                                                                       |
 
 The stock Compose file passes only the environment variables shown in its
@@ -60,8 +63,9 @@ The check shares startup validation for quotas, lifetimes, drain bounds,
 authentication conflicts, admission URL, listener/destination syntax, exact origin,
 and TLS certificate/key pairing and PEM loading. A configured target policy must
 be readable, at most 64 KiB, contain one JSON object with a `targets` map, and
-have valid destination keys and supported fields. Startup now checks the policy
-snapshot and TLS pair before opening listeners; subsequent policy reloads use the
+have valid label keys and supported fields. Startup verifies that the default
+label exists in the policy snapshot, then checks the policy and TLS pair before
+opening listeners; subsequent policy reloads use the
 same policy parser. Validation errors omit configured values and file contents.
 
 The command runs in the scratch image without a shell or reachable backend.
@@ -71,20 +75,20 @@ static configuration evidence; files and network conditions can change afterward
 
 ### Connectivity diagnostics
 
-Use `-diagnose` to check the default upstream, or select an exact configured target:
+Use `-diagnose` to check the configured default label, or select a configured label:
 
 ```sh
 bridge -diagnose -diagnostic-timeout=5s
-bridge -diagnose -targets-file=config/targets.json -diagnostic-target=service.internal:443
+bridge -diagnose -targets-file=config/targets.json -diagnostic-target=agent
 docker compose exec bridge /bridge -diagnose
 ```
 
 This is an explicit network operation. It opens one connection to the selected
 backend and closes it after the checks; it opens no listeners, calls no admission
-service, and sends no credentials or RPC/application messages. The default
-upstream remains implicitly allowed; other destinations must occur in the target
-policy. TLS is selected by that policy or `-upstream-tls` for the default upstream,
-using the same minimum TLS 1.2, system trust, hostname verification, and `h2` ALPN
+service, and sends no credentials or RPC/application messages. The default label
+and every requested label must occur in the target policy. TLS is selected by the
+policy entry, using the same minimum TLS 1.2, system trust, physical-hostname
+verification, and `h2` ALPN
 requirements as relay connections. There is no insecure certificate bypass.
 
 `-diagnostic-timeout` is one overall DNS/TCP/TLS deadline, defaults to 5s, and
@@ -116,23 +120,23 @@ results; the scratch image can execute this command directly without a shell.
 
 ### External admission and the reference verifier
 
-When `ADMISSION_URL` is set, the bridge still resolves the requested destination
-through its static destination policy first. It then posts a bounded JSON request
-containing the opaque browser credential and the already-approved `target` to
+When `ADMISSION_URL` is set, the bridge resolves the requested target label
+through its static label-to-backend policy first. It then posts a bounded JSON
+request containing the opaque browser credential and the already-approved label to
 that fixed URL. HTTPS is required except for loopback development. Redirects are
 not followed, requests have a two-second timeout, credentials are limited to 4 KiB,
 and responses are limited to 16 KiB. The request and successful response are:
 
 ```json
-{"version":1,"credential":"<opaque bearer credential>","target":"service.internal:443"}
+{"version":1,"credential":"<opaque bearer credential>","target":"agent"}
 ```
 
 ```json
-{"version":1,"subject":"user-123","target":"service.internal:443","expires_at":1790000000}
+{"version":1,"subject":"user-123","target":"agent","expires_at":1790000000}
 ```
 
 The bridge requires exactly one JSON object with `version: 1`, a bounded `subject`,
-the exact same `target`, and a future Unix-second `expires_at` within
+the exact same logical `target` label, and a future Unix-second `expires_at` within
 `MAX_ADMISSION_GRANT_LIFETIME`. Malformed, stale, mismatched, or unavailable
 verifier responses fail closed. The bridge never takes a destination or TLS policy
 from the grant.
@@ -145,7 +149,8 @@ the credential or impose application claim semantics.
 
 `examples/admission` is a separately deployed reference verifier. It accepts an
 RS256 JWT with required `iss`, `aud`, `sub`, `nbf`, and `exp` claims and a bounded
-`targets` string array. The requested destination must match a target exactly.
+`targets` string array. The requested logical label must match a target exactly;
+physical backend addresses are never authorization identities.
 The verifier loads keys only from its configured JWKS URL; token-provided `jku`
 and `x5u` URLs and unsupported `crit` headers are rejected. JWKS keys with a
 declared `use` must say `sig`; declared `key_ops` must include `verify`. Its JWKS
@@ -169,23 +174,36 @@ tunnel closes at the earlier of grant expiry and `MAX_TUNNEL_LIFETIME`.
 ```json
 {
   "targets": {
-    "python-demo:50051": { "tls": false },
-    "service.internal:443": { "tls": true }
+    "demo": { "address": "python-demo:50051", "tls": false },
+    "agent": { "address": "service.internal:443", "tls": true }
   }
 }
 ```
 
-- `targets`: map of exact client-selectable `host:port` addresses. IPv6 addresses
-  use brackets, for example `[::1]:50051`.
+- `targets`: map of logical labels matching `^[a-z][a-z0-9_-]{0,62}$` to backend
+  policy entries. A label maps to an `address` in `host:port` form; IPv6 addresses
+  use brackets, for example `[::1]:50051`. Raw addresses are not valid labels.
+- `address`: physical backend `host:port`, resolved from the bridge network.
 - `tls`: boolean, default `false` if omitted. When true, verifies the backend
-  certificate/hostname and requires HTTP/2 ALPN. The client cannot override it.
+  certificate against the configured physical hostname and requires HTTP/2 ALPN.
+  The client cannot override it.
 
-The bridge rereads the file for each new non-default destination selection.
+The bridge rereads the file for each new tunnel, including one using the default
+label.
 Unknown fields, malformed JSON, or files larger than 64 KiB are rejected. Use
 atomic file replacement to avoid partially written snapshots. Compose mounts
 `./config` as `/config:ro`, allowing host-side updates without redeployment.
-Removing a destination blocks new connections but does not close existing ones.
-`UPSTREAM` remains implicitly allowed independently of this file.
+Removing a label blocks new connections but does not close existing ones. Remapping
+a label affects new and reconnected tunnels. Existing tunnels keep their selected
+backend. Removing the default label also denies new tunnels that omit `target`.
+Every label, including the default, is authorized by this policy.
+
+To migrate an address-keyed policy, move each old `host:port` key to a logical
+label and put that address in the entry's `address` field. Set `DEFAULT_TARGET`
+to the label that replaces the former `UPSTREAM` destination, and move its TLS
+setting into that entry. `UPSTREAM`, `-upstream`, `UPSTREAM_TLS`, and
+`-upstream-tls` are removed; raw-address target selection has no compatibility
+path.
 
 ## TypeScript connection options
 
@@ -195,11 +213,11 @@ Removing a destination blocks new connections but does not close existing ones.
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `url` | Required | Public `ws://` or `wss://` tunnel endpoint. |
-| `target` | Omitted | Exact backend `host:port`; omission uses the bridge's default upstream. |
+| `target` | Omitted | Logical target label; omission uses `DEFAULT_TARGET` (`demo` by default). The TypeScript client throws `TypeError` for an empty or malformed explicit label before opening a socket. If such a label reaches the bridge protocol directly, it returns HTTP 400; unknown labels return 403. |
 | `tunnelToken` | Omitted | Static string or sync/async provider for the outer tunnel credential. |
 | `backendBearerToken` | Omitted | Static string or sync/async provider for default inner RPC authorization. |
-| `authority` | `target`, then `backend` | HTTP/2 `:authority`; does not change the TCP destination. |
-| `scheme` | `http` | HTTP/2 `:scheme`, either `http` or `https`; does not enable upstream TLS. |
+| `authority` | Target label, or `backend` when omitted | HTTP/2 `:authority`; an explicit override is supported and does not change the backend. |
+| `scheme` | `http` | HTTP/2 `:scheme`, either `http` or `https`; does not select backend TLS. |
 | `interceptors` | Empty | Readonly list of standard Connect interceptors, once per logical RPC. |
 | `retry` | Transparent retries only | Optional policies, replay budgets, and throttling; see the [retry reference](../web/RETRIES.md#configure-retries). |
 | `onStateChange` | Omitted | Listener for `connecting`, `open`, `transient_failure`, and `closed`, with optional reason/error. |
@@ -260,7 +278,7 @@ The reusable example offers the same choice:
 const { client, close } = await connectDemo(
   bridgeUrl,
   token,
-  "python-demo:50051",
+  "demo",
   { forwardToken: true },
 );
 ```
@@ -292,7 +310,7 @@ environment variables; the Go relay does not decode RPCs or implement retries.
 | ---------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `TUNNEL_URL`           | `ws://localhost:8080/tunnel` | Public bridge endpoint.                                          |
 | `TUNNEL_TOKEN`         | empty                        | Outer tunnel credential.                                         |
-| `BACKEND_TARGET`       | `python-demo:50051`          | Backend destination.                                             |
+| `BACKEND_TARGET`       | `demo`                        | Logical backend label.                                            |
 | `FORWARD_TUNNEL_TOKEN` | `false`                      | Literal `true` forwards the tunnel token as RPC bearer metadata. |
 
 These are client settings for `cd web && npm run example`, not bridge settings.
@@ -347,7 +365,7 @@ sets `GOMEMLIMIT`. These do not replace container memory limits.
 | Demo backend send / receive message limit        | 1 MiB each                                              |
 | Demo backend concurrent HTTP/2 streams           | 64 per connection                                       |
 
-The client defaults HTTP/2 `:authority` to the selected target, or `backend` when
-the default destination is used. It defaults `:scheme` to `http`. Set `authority`
+The client defaults HTTP/2 `:authority` to the selected label, or `backend` when
+target is omitted. It defaults `:scheme` to `http`. Set `authority`
 and `scheme` in `openBridgeConnection()` when upstream virtual hosting needs other
 values. These are HTTP/2 metadata; upstream TLS remains a bridge policy choice.

@@ -8,16 +8,23 @@ The bridge does not authorize individual RPC methods. Enforce application
 authorization in the gRPC service. Browser Origin filtering does not authenticate
 native clients. Do not put sensitive production data into the demo service.
 
-The optional static tunnel token grants access to all allowed destinations; it
+The optional static tunnel token grants access to all configured target labels; it
 does not provide per-user or per-method authorization. Alternatively, configure a
 fixed external admission service to authorize an opaque credential against the
-already statically allowed target. The bridge fails closed on verifier errors,
+already configured logical target label. Only the bridge policy supplies the
+backend address and TLS settings; client-supplied addresses are rejected. The
+bridge fails closed on verifier errors,
 validates the bounded grant response, caps concurrent tunnels by principal within
 one process after admission identifies the subject, and closes tunnels at grant
 expiry or the configured maximum tunnel lifetime. The global connection cap also
 bounds pending admission requests. Grants do not change destination or TLS policy. The bridge does not
 interpret JWT claims or authorize individual RPC methods; enforce those in the
 verifier and gRPC service respectively.
+
+Authorization follows the label when an operator remaps it to another backend.
+Treat changes to the label-to-address policy as changes to the resources that
+authorized clients can reach. Policy changes apply to new tunnels; established
+tunnels keep their existing backend connections.
 
 Per-principal quotas are process-local and are not coordinated across replicas.
 Revoking a credential at its issuer does not instantly terminate existing tunnels;

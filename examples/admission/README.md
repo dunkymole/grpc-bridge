@@ -1,8 +1,8 @@
 # Reference admission verifier
 
 This small service is an optional companion to the bridge. It verifies a signed
-access token and returns a short-lived grant for the exact destination the bridge
-has already selected from its static allowlist. The bridge itself stays
+access token and returns a short-lived grant for the exact logical target label
+the bridge has already resolved through its static label-to-backend policy. The bridge itself stays
 standard-library-only and does not parse JWTs.
 
 Run the verifier with trusted operator configuration:
@@ -24,9 +24,10 @@ using a private network or an authenticated proxy, and protect the issuer/JWKS
 configuration as deployment credentials.
 
 The verifier accepts only RS256 JWTs with the configured exact `iss` and `aud`, a
-bounded `sub`, required `nbf` and `exp`, and a `targets` array of up to 128 exact
-`host:port` destinations. The requested destination must be present in that
-array. It rejects `crit`, `jku`, and `x5u` headers. JWKS keys may omit `use` and
+bounded `sub`, required `nbf` and `exp`, and a `targets` array of up to 128 valid
+logical labels (for example, `demo`, `orders`, or `agent-service`). The requested
+label must be present in that array. Physical backend addresses never serve as
+authorization identities. It rejects `crit`, `jku`, and `x5u` headers. JWKS keys may omit `use` and
 `key_ops`; if present, `use` must be `sig` and `key_ops` must include `verify`.
 
 JWKS is fetched only from the configured URL. Fetches use a two-second timeout,

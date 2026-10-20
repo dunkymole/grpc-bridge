@@ -60,7 +60,7 @@ Compose network; it exposes no host port. No API keys or cloud services required
 - A versioned tunnel profile, exact browser-origin checking, optional token auth.
 - Fixed-size relay buffers, connection admission limits, ping/pong, write deadlines.
 - HTTPS/WSS and verified TLS to the backend as deployment options.
-- Client-selected backend addresses with a live, server-owned destination allowlist.
+- Client-selected logical backend labels with a live, server-owned address and TLS policy.
 - Two non-root, read-only containers. The bridge is a static binary in `scratch`.
 
 **Zero dependencies applies to the bridge:** Go standard library only, no Go
@@ -90,8 +90,9 @@ See its
 [runnable TypeScript examples](web/examples/client.ts), and the
 [client addressing and routing guide](docs/CLIENT-AND-ROUTING.md). Run them with
 `cd web && npm ci && npm run example` while the Compose stack is running.
-The client sends the backend host and port in the WebSocket handshake. The bridge
-authorizes and resolves it. Edit `config/targets.json` to onboard backends without
+The client sends a logical backend label in the WebSocket handshake. The bridge
+authorizes the label and resolves its server-owned address and TLS policy from
+`config/targets.json`. Edit that file to onboard or remap backends without
 restarting the bridge. Destination selection is separate from gRPC metadata.
 
 ```ts
@@ -100,7 +101,7 @@ import { openBridgeConnection, inputQueue } from "@dunkymole/grpc-bridge";
 
 const connection = await openBridgeConnection({
   url: "ws://localhost:8080/tunnel",
-  target: "python-demo:50051",
+  target: "demo",
 });
 const client = connection.client(DemoContract);
 const input = inputQueue<{ text: string }>();
@@ -142,7 +143,7 @@ const requestId: Interceptor = (next) => async (req) => {
 };
 const connection = await openBridgeConnection({
   url: "ws://localhost:8080/tunnel",
-  target: "python-demo:50051",
+  target: "demo",
   interceptors: [requestId],
 });
 const clientFor = (name: string) => connection.client(DemoContract, {
@@ -218,13 +219,12 @@ four-hour soak profile, see the [benchmark guide](docs/BENCHMARKING.md).
 | Setting                          | Default                                  | Purpose                                              |
 | -------------------------------- | ---------------------------------------- | ---------------------------------------------------- |
 | `LISTEN` / `-listen`             | `127.0.0.1:8080` (image: `0.0.0.0:8080`) | HTTP listener                                        |
-| `UPSTREAM` / `-upstream`         | `127.0.0.1:50051`                        | Default backend when the client omits a target       |
-| `TARGETS_FILE` / `-targets-file` | empty (Compose: `/config/targets.json`)  | Live JSON allowlist for client-selected destinations |
+| `DEFAULT_TARGET` / `-default-target` | `demo`                                | Default logical backend label when the client omits a target |
+| `TARGETS_FILE` / `-targets-file` | `config/targets.json` (image and Compose: `/config/targets.json`) | Live JSON label-to-backend policy |
 | `ALLOWED_ORIGIN` / `-origin`     | `http://localhost:8080`                  | Exact allowed browser Origin                         |
 | `TUNNEL_TOKEN`                   | empty                                    | Optional shared base64url-safe token                 |
 | `-max-connections`               | `256`                                    | Concurrent tunnel admission limit                    |
 | `TLS_CERT`, `TLS_KEY`            | empty                                    | PEM files enabling HTTPS/WSS                         |
-| `UPSTREAM_TLS=true`              | false                                    | Verify backend certificate and require `h2` ALPN     |
 | `ASSETS` / `-assets`             | `web/dist` (image: `/web`)               | Demo files                                           |
 
 To try authentication locally, set `TUNNEL_TOKEN` in an ignored `.env` file,

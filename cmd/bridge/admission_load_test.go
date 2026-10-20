@@ -51,15 +51,15 @@ func TestAdmissionQuotaStormDuringTrafficAndGrantExpiry(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(admissionResponse{Version: 1, Subject: request.Credential, Target: request.Target, ExpiresAt: expiry.Unix()})
 	}))
 	defer admission.Close()
-	g := newGateway(config{upstream: backend.Addr().String(), admissionURL: admission.URL, maxConnections: 128, maxPerPrincipal: 1, maxGrantLifetime: 2 * time.Minute, maxTunnelLifetime: time.Minute})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, backend.Addr().String(), false), admissionURL: admission.URL, maxConnections: 128, maxPerPrincipal: 1, maxGrantLifetime: 2 * time.Minute, maxTunnelLifetime: time.Minute})
 	server := httptest.NewServer(g)
 	defer server.Close()
-	alpha, _, response := rawHandshake(t, server.URL, backend.Addr().String(), "alpha")
+	alpha, _, response := rawHandshake(t, server.URL, "demo", "alpha")
 	defer alpha.Close()
 	if response.StatusCode != 101 {
 		t.Fatal(response.Status)
 	}
-	beta, reader, response := rawHandshake(t, server.URL, backend.Addr().String(), "beta")
+	beta, reader, response := rawHandshake(t, server.URL, "demo", "beta")
 	defer beta.Close()
 	if response.StatusCode != 101 {
 		t.Fatal(response.Status)
@@ -74,7 +74,7 @@ func TestAdmissionQuotaStormDuringTrafficAndGrantExpiry(t *testing.T) {
 				if attempt%2 == 1 {
 					credential, want = "denied", http.StatusForbidden
 				}
-				conn, _, response := rawHandshake(t, server.URL, backend.Addr().String(), credential)
+				conn, _, response := rawHandshake(t, server.URL, "demo", credential)
 				conn.Close()
 				response.Body.Close()
 				if response.StatusCode != want {
@@ -131,7 +131,7 @@ func TestAdmissionQuotaStormDuringTrafficAndGrantExpiry(t *testing.T) {
 	if _, err := io.ReadFull(reader, frame); err != nil || !bytes.Equal(frame, []byte{0x82, 2, 'o', 'k'}) {
 		t.Fatalf("sibling failed after expiry: %x %v", frame, err)
 	}
-	replacement, _, response := rawHandshake(t, server.URL, backend.Addr().String(), "alpha")
+	replacement, _, response := rawHandshake(t, server.URL, "demo", "alpha")
 	defer replacement.Close()
 	if response.StatusCode != 101 {
 		t.Fatalf("released quota could not be reused: %s", response.Status)

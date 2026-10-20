@@ -25,8 +25,8 @@ func TestVerifierValidJWTAndExactDestinationScope(t *testing.T) {
 	verifier, cancel := newTestVerifier(t, jwks.URL)
 	defer cancel()
 
-	valid := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "tenant-1", "https://issuer.example", []string{"backend.internal:443"}), "key-one", nil)
-	result := requestVerifier(t, verifier, valid, "backend.internal:443")
+	valid := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "tenant-1", "https://issuer.example", []string{"backend"}), "key-one", nil)
+	result := requestVerifier(t, verifier, valid, "backend")
 	if result.Code != http.StatusOK {
 		t.Fatalf("valid token denied: %d %s", result.Code, result.Body.String())
 	}
@@ -34,13 +34,16 @@ func TestVerifierValidJWTAndExactDestinationScope(t *testing.T) {
 	if err := json.Unmarshal(result.Body.Bytes(), &grant); err != nil {
 		t.Fatal(err)
 	}
-	if grant.Version != 1 || grant.Subject != "tenant-1" || grant.Target != "backend.internal:443" || grant.ExpiresAt <= time.Now().Unix() || grant.ExpiresAt > time.Now().Add(30*time.Second).Unix() {
+	if grant.Version != 1 || grant.Subject != "tenant-1" || grant.Target != "backend" || grant.ExpiresAt <= time.Now().Unix() || grant.ExpiresAt > time.Now().Add(30*time.Second).Unix() {
 		t.Fatalf("grant exceeded configured scope/lifetime: %#v", grant)
 	}
 
-	result = requestVerifier(t, verifier, valid, "other.internal:443")
+	result = requestVerifier(t, verifier, valid, "other")
 	if result.Code != http.StatusForbidden {
-		t.Fatalf("wrong destination was not forbidden: %d", result.Code)
+		t.Fatalf("wrong label was not forbidden: %d", result.Code)
+	}
+	if result = requestVerifier(t, verifier, valid, "backend.internal:443"); result.Code != http.StatusBadRequest {
+		t.Fatalf("raw address was accepted: %d", result.Code)
 	}
 	_ = set
 }
@@ -59,16 +62,16 @@ func TestVerifierRejectsIssuerAudienceTimesAlgorithmsAndKeys(t *testing.T) {
 		kid   string
 		extra map[string]any
 	}{
-		{"wrong issuer", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://wrong.example", []string{"backend.internal:443"}), jwt.SigningMethodRS256, "key-one", nil},
-		{"wrong audience", claimsForAudience(now.Add(time.Minute), now.Add(-time.Minute), "u", []string{"other"}, []string{"backend.internal:443"}), jwt.SigningMethodRS256, "key-one", nil},
-		{"expired", claimsFor(now.Add(-time.Minute), now.Add(-2*time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), jwt.SigningMethodRS256, "key-one", nil},
-		{"not yet valid", claimsFor(now.Add(time.Minute), now.Add(time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), jwt.SigningMethodRS256, "key-one", nil},
-		{"missing nbf", claims{RegisteredClaims: jwt.RegisteredClaims{Issuer: "https://issuer.example", Subject: "u", Audience: jwt.ClaimStrings{"grpc-bridge"}, ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute))}, Targets: []string{"backend.internal:443"}}, jwt.SigningMethodRS256, "key-one", nil},
-		{"disallowed algorithm", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), jwt.SigningMethodHS256, "key-one", nil},
-		{"unknown key", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), jwt.SigningMethodRS256, "unknown-key", nil},
-		{"token jku", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), jwt.SigningMethodRS256, "key-one", map[string]any{"jku": "https://attacker.example/jwks.json"}},
-		{"token x5u", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), jwt.SigningMethodRS256, "key-one", map[string]any{"x5u": "https://attacker.example/cert"}},
-		{"unsupported critical extension", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), jwt.SigningMethodRS256, "key-one", map[string]any{"crit": []string{"enterprise_scope"}, "enterprise_scope": true}},
+		{"wrong issuer", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://wrong.example", []string{"backend"}), jwt.SigningMethodRS256, "key-one", nil},
+		{"wrong audience", claimsForAudience(now.Add(time.Minute), now.Add(-time.Minute), "u", []string{"other"}, []string{"backend"}), jwt.SigningMethodRS256, "key-one", nil},
+		{"expired", claimsFor(now.Add(-time.Minute), now.Add(-2*time.Minute), "u", "https://issuer.example", []string{"backend"}), jwt.SigningMethodRS256, "key-one", nil},
+		{"not yet valid", claimsFor(now.Add(time.Minute), now.Add(time.Minute), "u", "https://issuer.example", []string{"backend"}), jwt.SigningMethodRS256, "key-one", nil},
+		{"missing nbf", claims{RegisteredClaims: jwt.RegisteredClaims{Issuer: "https://issuer.example", Subject: "u", Audience: jwt.ClaimStrings{"grpc-bridge"}, ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute))}, Targets: []string{"backend"}}, jwt.SigningMethodRS256, "key-one", nil},
+		{"disallowed algorithm", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), jwt.SigningMethodHS256, "key-one", nil},
+		{"unknown key", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), jwt.SigningMethodRS256, "unknown-key", nil},
+		{"token jku", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), jwt.SigningMethodRS256, "key-one", map[string]any{"jku": "https://attacker.example/jwks.json"}},
+		{"token x5u", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), jwt.SigningMethodRS256, "key-one", map[string]any{"x5u": "https://attacker.example/cert"}},
+		{"unsupported critical extension", claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), jwt.SigningMethodRS256, "key-one", map[string]any{"crit": []string{"enterprise_scope"}, "enterprise_scope": true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,7 +81,7 @@ func TestVerifierRejectsIssuerAudienceTimesAlgorithmsAndKeys(t *testing.T) {
 			} else {
 				token = signedToken(t, keys[0].private, tc.claim, tc.kid, tc.extra)
 			}
-			response := requestVerifier(t, verifier, token, "backend.internal:443")
+			response := requestVerifier(t, verifier, token, "backend")
 			if response.Code != http.StatusUnauthorized {
 				t.Fatalf("invalid token accepted: %d %s", response.Code, response.Body.String())
 			}
@@ -94,19 +97,19 @@ func TestVerifierJWKSRotationAndUnknownKeyFailsClosed(t *testing.T) {
 	verifier, cancel := newTestVerifier(t, jwks.URL)
 	defer cancel()
 	now := time.Now()
-	old := signedToken(t, first[0].private, claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), "key-one", nil)
-	if response := requestVerifier(t, verifier, old, "backend.internal:443"); response.Code != http.StatusOK {
+	old := signedToken(t, first[0].private, claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), "key-one", nil)
+	if response := requestVerifier(t, verifier, old, "backend"); response.Code != http.StatusOK {
 		t.Fatalf("initial key failed: %d %s", response.Code, response.Body.String())
 	}
 	setKeys(second)
-	rotated := signedToken(t, second[0].private, claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), "key-two", nil)
-	if response := requestVerifier(t, verifier, rotated, "backend.internal:443"); response.Code != http.StatusOK {
+	rotated := signedToken(t, second[0].private, claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), "key-two", nil)
+	if response := requestVerifier(t, verifier, rotated, "backend"); response.Code != http.StatusOK {
 		t.Fatalf("new JWKS key did not rotate in: %d %s", response.Code, response.Body.String())
 	}
 
-	unknown := signedToken(t, first[0].private, claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), "never-published", nil)
+	unknown := signedToken(t, first[0].private, claimsFor(now.Add(time.Minute), now.Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), "never-published", nil)
 	setKeys(nil)
-	response := requestVerifier(t, verifier, unknown, "backend.internal:443")
+	response := requestVerifier(t, verifier, unknown, "backend")
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unknown key after rotation did not fail closed: %d", response.Code)
 	}
@@ -131,12 +134,12 @@ func TestVerifierRejectsUnknownKeyDuringJWKSOutage(t *testing.T) {
 	unavailable.Store(true)
 	// A cached key remains usable during an outage, while an unknown key cannot
 	// cause an unbounded fetch loop or an allow decision.
-	known := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), "key-one", nil)
-	if response := requestVerifier(t, verifier, known, "backend.internal:443"); response.Code != http.StatusOK {
+	known := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), "key-one", nil)
+	if response := requestVerifier(t, verifier, known, "backend"); response.Code != http.StatusOK {
 		t.Fatalf("cached key stopped working during JWKS outage: %d", response.Code)
 	}
-	token := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), "absent", nil)
-	response := requestVerifier(t, verifier, token, "backend.internal:443")
+	token := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), "absent", nil)
+	response := requestVerifier(t, verifier, token, "backend")
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("verifier outage did not fail closed: %d", response.Code)
 	}
@@ -171,8 +174,8 @@ func TestVerifierExcludesJWKEncryptionPurposes(t *testing.T) {
 			defer jwks.Close()
 			verifier, cancel := newTestVerifier(t, jwks.URL)
 			defer cancel()
-			token := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), "key-one", nil)
-			if response := requestVerifier(t, verifier, token, "backend.internal:443"); response.Code != http.StatusUnauthorized {
+			token := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), "key-one", nil)
+			if response := requestVerifier(t, verifier, token, "backend"); response.Code != http.StatusUnauthorized {
 				t.Fatalf("JWK declared for encryption was accepted: %d", response.Code)
 			}
 		})
@@ -193,8 +196,8 @@ func TestVerifierExcludesJWKEncryptionPurposes(t *testing.T) {
 	defer jwks.Close()
 	verifier, cancel := newTestVerifier(t, jwks.URL)
 	defer cancel()
-	token := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), "key-one", nil)
-	if response := requestVerifier(t, verifier, token, "backend.internal:443"); response.Code != http.StatusOK {
+	token := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), "key-one", nil)
+	if response := requestVerifier(t, verifier, token, "backend"); response.Code != http.StatusOK {
 		t.Fatalf("signature-purpose JWK was rejected: %d %s", response.Code, response.Body.String())
 	}
 }
@@ -213,8 +216,8 @@ func TestVerifierDoesNotFollowJWKSRedirect(t *testing.T) {
 	defer redirect.Close()
 	verifier, cancel := newTestVerifier(t, redirect.URL)
 	defer cancel()
-	token := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend.internal:443"}), "key-one", nil)
-	if response := requestVerifier(t, verifier, token, "backend.internal:443"); response.Code != http.StatusUnauthorized {
+	token := signedToken(t, keys[0].private, claimsFor(time.Now().Add(time.Minute), time.Now().Add(-time.Minute), "u", "https://issuer.example", []string{"backend"}), "key-one", nil)
+	if response := requestVerifier(t, verifier, token, "backend"); response.Code != http.StatusUnauthorized {
 		t.Fatalf("token unexpectedly verified through JWKS redirect: %d", response.Code)
 	}
 	if redirectHits.Load() != 0 {
@@ -365,10 +368,10 @@ func TestVerifierRejectsMalformedAdmissionRequests(t *testing.T) {
 	verifier, cancel := newTestVerifier(t, jwks.URL)
 	defer cancel()
 	for _, body := range []string{
-		`{"version":1,"credential":"x","target":"backend.internal:443","target":"other:443"}`,
-		`{"version":1,"credential":"x","CREDENTIAL":"y","target":"backend.internal:443"}`,
-		`{"version":1,"credential":"x","target":"backend.internal:443","extra":true}`,
-		`{"version":1,"credential":"x","target":"backend.internal:443"} {}`,
+		`{"version":1,"credential":"x","target":"backend","target":"other"}`,
+		`{"version":1,"credential":"x","CREDENTIAL":"y","target":"backend"}`,
+		`{"version":1,"credential":"x","target":"backend","extra":true}`,
+		`{"version":1,"credential":"x","target":"backend"} {}`,
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/v1/admit", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -381,12 +384,12 @@ func TestVerifierRejectsMalformedAdmissionRequests(t *testing.T) {
 }
 
 func TestTargetValidationIsExactAndBounded(t *testing.T) {
-	for _, target := range []string{"backend.internal:443", "[::1]:50051"} {
+	for _, target := range []string{"backend", "a_1-b", "a"} {
 		if !validTarget(target) {
 			t.Errorf("rejected valid target %q", target)
 		}
 	}
-	for _, target := range []string{"", "backend:0", "backend:65536", "host/path:443", "host:0443", "host:443\n", fmt.Sprintf("%s:443", strings.Repeat("a", 321))} {
+	for _, target := range []string{"", "backend:0", "backend:65536", "host/path:443", "host:0443", "host:443\n", fmt.Sprintf("%s", strings.Repeat("a", 64))} {
 		if validTarget(target) {
 			t.Errorf("accepted invalid target %q", target)
 		}

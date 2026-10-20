@@ -68,9 +68,9 @@ func newAdmissionHTTPClient() *http.Client {
 }
 
 // authorizeTarget asks one fixed operator-configured service to independently
-// grant the already-resolved static destination to a principal.
+// grant the selected logical target label to a principal.
 func (g *gateway) authorizeTarget(ctx context.Context, credential, target string) (accessGrant, int) {
-	if len(credential) == 0 || len(credential) > maxCredentialBytes || !utf8.ValidString(credential) {
+	if len(credential) == 0 || len(credential) > maxCredentialBytes || !utf8.ValidString(credential) || !validTargetLabel(target) {
 		return accessGrant{}, http.StatusUnauthorized
 	}
 	body, err := json.Marshal(admissionRequest{Version: 1, Credential: credential, Target: target})

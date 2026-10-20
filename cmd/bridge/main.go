@@ -34,54 +34,50 @@ const bufferSize = 16 * 1024
 const maxFrame = 1 << 20
 
 type config struct {
-	upstream, origin, token string
-	maxConnections          int
-	upstreamTLS             bool
-	targetsFile             string
-	admissionURL            string
-	maxPerPrincipal         int
-	maxGrantLifetime        time.Duration
-	maxTunnelLifetime       time.Duration
-	admissionClient         *http.Client
-	upstreamRoots           *x509.CertPool
+	defaultTarget, origin, token string
+	maxConnections               int
+	targetsFile                  string
+	admissionURL                 string
+	maxPerPrincipal              int
+	maxGrantLifetime             time.Duration
+	maxTunnelLifetime            time.Duration
+	admissionClient              *http.Client
+	upstreamRoots                *x509.CertPool
 }
 
 type targetPolicy struct {
-	TLS bool `json:"tls"`
+	Address string `json:"address"`
+	TLS     bool   `json:"tls"`
+}
+
+type resolvedTarget struct {
+	label, address string
+	tls            bool
 }
 
 // Read a bounded policy snapshot for each new destination selection. Operators
 // can atomically replace the file without restarting existing connections.
-func (g *gateway) destination(r *http.Request) (string, bool, int) {
+func (g *gateway) destination(r *http.Request) (resolvedTarget, int) {
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil || len(query["target"]) > 1 {
-		return "", false, 400
+		return resolvedTarget{}, 400
 	}
-	target := query.Get("target")
-	if target == "" {
-		target = g.upstream
+	label := g.defaultTarget
+	if targets, present := query["target"]; present {
+		label = targets[0]
 	}
-	if len(target) > 320 {
-		return "", false, 400
-	}
-	if !validDestination(target) {
-		return "", false, 400
-	}
-	if target == g.upstream {
-		return target, g.upstreamTLS, 0
-	}
-	if g.targetsFile == "" {
-		return "", false, 403
+	if !validTargetLabel(label) {
+		return resolvedTarget{}, 400
 	}
 	policy, err := readTargetPolicy(g.targetsFile)
 	if err != nil {
-		return "", false, 503
+		return resolvedTarget{}, 503
 	}
-	allowed, ok := policy[target]
+	allowed, ok := policy[label]
 	if !ok {
-		return "", false, 403
+		return resolvedTarget{}, 403
 	}
-	return target, allowed.TLS, 0
+	return resolvedTarget{label: label, address: allowed.Address, tls: allowed.TLS}, 0
 }
 
 type gateway struct {
@@ -473,7 +469,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reject("connection capacity reached", 503, "capacity")
 		return
 	}
-	destination, useTLS, status := g.destination(r)
+	destination, status := g.destination(r)
 	if status != 0 {
 		reject("destination unavailable or not allowed", status, map[int]string{400: "destination", 403: "destination_denied", 503: "policy"}[status])
 		return
@@ -485,7 +481,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	principal = "anonymous"
 	var grantExpiry time.Time
 	if g.admissionURL != "" {
-		grant, grantStatus := g.authorizeTarget(handshakeCtx, credential, destination)
+		grant, grantStatus := g.authorizeTarget(handshakeCtx, credential, destination.label)
 		if grantStatus != 0 {
 			failureReason := "admission"
 			if grantStatus == http.StatusUnauthorized || grantStatus == http.StatusForbidden {
@@ -520,16 +516,16 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithDeadline(handshakeCtx, dialDeadline)
 	defer cancel()
 	dialStart := time.Now()
-	if useTLS {
+	if destination.tls {
 		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}, RootCAs: g.upstreamRoots}
 		d := &tls.Dialer{NetDialer: &net.Dialer{}, Config: tlsConfig}
-		upstream, err = d.DialContext(ctx, "tcp", destination)
+		upstream, err = d.DialContext(ctx, "tcp", destination.address)
 		if err == nil && upstream.(*tls.Conn).ConnectionState().NegotiatedProtocol != "h2" {
 			closeTransportConn(upstream)
 			err = errors.New("upstream did not negotiate h2")
 		}
 	} else {
-		upstream, err = (&net.Dialer{}).DialContext(ctx, "tcp", destination)
+		upstream, err = (&net.Dialer{}).DialContext(ctx, "tcp", destination.address)
 	}
 	g.metrics.dial.observe(time.Since(dialStart).Seconds())
 	if err != nil {
@@ -885,7 +881,7 @@ func healthcheckURL(address string) (string, error) {
 	return "http://" + net.JoinHostPort(host, port) + "/readyz", nil
 }
 
-func healthRoutes(mux *http.ServeMux, g *gateway, upstream string) {
+func healthRoutes(mux *http.ServeMux, g *gateway) {
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok\n")
@@ -903,7 +899,17 @@ func healthRoutes(mux *http.ServeMux, g *gateway, upstream string) {
 			http.Error(w, "bridge is draining", http.StatusServiceUnavailable)
 			return
 		}
-		conn, err := net.DialTimeout("tcp", upstream, time.Second)
+		policy, err := readTargetPolicy(g.targetsFile)
+		if err != nil {
+			http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		defaultRoute, ok := policy[g.defaultTarget]
+		if !ok {
+			http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		conn, err := net.DialTimeout("tcp", defaultRoute.Address, time.Second)
 		if err != nil {
 			http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
 			return
@@ -985,13 +991,12 @@ func main() {
 	flag.CommandLine.SetOutput(io.Discard)
 	listen := flag.String("listen", env("LISTEN", "127.0.0.1:8080"), "HTTP listen address")
 	healthListen := flag.String("health-listen", env("HEALTH_LISTEN", "127.0.0.1:8082"), "private HTTP listener for liveness/readiness probes")
-	upstream := flag.String("upstream", env("UPSTREAM", "127.0.0.1:50051"), "default upstream TCP address")
-	targetsFile := flag.String("targets-file", os.Getenv("TARGETS_FILE"), "JSON allowed destinations, reloaded on each new target selection")
+	defaultTarget := flag.String("default-target", env("DEFAULT_TARGET", "demo"), "default logical target label")
+	targetsFile := flag.String("targets-file", env("TARGETS_FILE", "config/targets.json"), "JSON target policy, reloaded on each new connection")
 	origin := flag.String("origin", env("ALLOWED_ORIGIN", "http://localhost:8080"), "exact allowed browser origin")
 	assets := flag.String("assets", env("ASSETS", "web/dist"), "demo static directory")
 	cert := flag.String("tls-cert", os.Getenv("TLS_CERT"), "PEM certificate for HTTPS/WSS")
 	key := flag.String("tls-key", os.Getenv("TLS_KEY"), "PEM key for HTTPS/WSS")
-	tlsUp := flag.Bool("upstream-tls", os.Getenv("UPSTREAM_TLS") == "true", "verify TLS and h2 ALPN upstream")
 	maxConns := flag.Int("max-connections", 256, "maximum concurrent tunnels")
 	maxPerPrincipal := flag.Int("max-connections-per-principal", envInt("MAX_CONNECTIONS_PER_PRINCIPAL", 8), "maximum concurrent tunnels for one principal")
 	maxGrant := flag.Duration("max-grant-lifetime", envDuration("MAX_ADMISSION_GRANT_LIFETIME", 15*time.Minute), "maximum accepted admission grant lifetime")
@@ -1001,7 +1006,7 @@ func main() {
 	healthcheck := flag.Bool("healthcheck", false, "check local HTTP readiness and exit")
 	checkConfig := flag.Bool("check-config", false, "validate configuration offline and exit")
 	diagnose := flag.Bool("diagnose", false, "check configured backend DNS, TCP, TLS and h2 ALPN and exit with JSON report")
-	diagnosticTarget := flag.String("diagnostic-target", "", "configured destination to diagnose; defaults to upstream")
+	diagnosticTarget := flag.String("diagnostic-target", "", "configured target label to diagnose; defaults to default-target")
 	diagnosticTimeout := flag.Duration("diagnostic-timeout", 5*time.Second, "overall connectivity diagnostic deadline, at most 1m")
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1066,20 +1071,20 @@ func main() {
 			log.Fatal("invalid ADMISSION_URL")
 		}
 	}
-	if err := validateOfflineSettings(*listen, *healthListen, *upstream, *origin, *targetsFile, *cert, *key); err != nil {
+	if err := validateOfflineSettings(*listen, *healthListen, *defaultTarget, *origin, *targetsFile, *cert, *key); err != nil {
 		log.Fatal(err)
 	}
 	if *diagnose {
-		os.Exit(runConnectivityDiagnostic(os.Stdout, config{upstream: *upstream, upstreamTLS: *tlsUp, targetsFile: *targetsFile}, *diagnosticTarget, *diagnosticTimeout))
+		os.Exit(runConnectivityDiagnostic(os.Stdout, config{defaultTarget: *defaultTarget, targetsFile: *targetsFile}, *diagnosticTarget, *diagnosticTimeout))
 	}
 	if *checkConfig {
 		fmt.Println("configuration valid")
 		return
 	}
-	g := newGateway(config{upstream: *upstream, origin: *origin, token: token, maxConnections: *maxConns, upstreamTLS: *tlsUp, targetsFile: *targetsFile, admissionURL: *admissionURL, maxPerPrincipal: *maxPerPrincipal, maxGrantLifetime: *maxGrant, maxTunnelLifetime: *maxTunnel})
+	g := newGateway(config{defaultTarget: *defaultTarget, origin: *origin, token: token, maxConnections: *maxConns, targetsFile: *targetsFile, admissionURL: *admissionURL, maxPerPrincipal: *maxPerPrincipal, maxGrantLifetime: *maxGrant, maxTunnelLifetime: *maxTunnel})
 	mux := http.NewServeMux()
 	mux.Handle("/tunnel", g)
-	healthRoutes(mux, g, *upstream)
+	healthRoutes(mux, g)
 	mux.HandleFunc("/metrics", g.serveMetrics)
 	mux.Handle("/", http.FileServer(http.Dir(*assets)))
 	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, ConnState: g.httpConnState}
@@ -1093,7 +1098,7 @@ func main() {
 		log.Fatalf("could not listen on private health address %q: %v", *healthListen, err)
 	}
 	healthMux := http.NewServeMux()
-	healthRoutes(healthMux, g, *upstream)
+	healthRoutes(healthMux, g)
 	healthServer := &http.Server{Handler: healthMux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, ConnState: g.httpConnState}
 	healthServeDone := make(chan error, 1)
 	go func() { healthServeDone <- healthServer.Serve(healthListener) }()
@@ -1105,7 +1110,7 @@ func main() {
 		shutdownOnSignal(g, server, healthServer, signals, *drainGrace)
 		close(shutdownDone)
 	}()
-	log.Printf("grpc-bridge listening on %s; health on %s; default upstream %s; max tunnels %d", *listen, *healthListen, *upstream, *maxConns)
+	log.Printf("grpc-bridge listening on %s; health on %s; default target %s; max tunnels %d", *listen, *healthListen, *defaultTarget, *maxConns)
 	var serveErr error
 	if *cert != "" {
 		serveErr = server.ServeTLS(publicListener, *cert, *key)

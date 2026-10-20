@@ -24,7 +24,7 @@ import (
 const (
 	maxRequestBytes = 8 << 10
 	maxCredential   = 4096
-	maxTarget       = 320
+	maxTarget       = 63
 	maxJWKSBytes    = 1 << 20
 )
 
@@ -63,7 +63,7 @@ func (c claims) Validate() error {
 	}
 	for _, target := range c.Targets {
 		if !validTarget(target) {
-			return errors.New("targets claim contains an invalid destination")
+			return errors.New("targets claim contains an invalid label")
 		}
 	}
 	return nil
@@ -199,21 +199,14 @@ func validateJWKSURL(raw string) error {
 }
 
 func validTarget(target string) bool {
-	if target == "" || len(target) > maxTarget || !utf8.ValidString(target) || strings.ContainsAny(target, "/@?#\\ \t\r\n") {
+	if len(target) < 1 || len(target) > maxTarget || target[0] < 'a' || target[0] > 'z' {
 		return false
 	}
-	host, port, err := net.SplitHostPort(target)
-	if err != nil || host == "" {
-		return false
-	}
-	for _, r := range host {
-		if unicode.IsControl(r) || unicode.IsSpace(r) {
+	for i := 1; i < len(target); i++ {
+		c := target[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
 			return false
 		}
-	}
-	var number int
-	if _, err := fmt.Sscanf(port, "%d", &number); err != nil || number < 1 || number > 65535 || fmt.Sprint(number) != port {
-		return false
 	}
 	return true
 }

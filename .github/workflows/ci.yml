@@ -96,6 +96,11 @@ jobs:
       GRPC_BRIDGE_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
       PROTO_CONTRACT_REVIEWED_REF: 6d028e3632e7b027f380cbc6b0449dfe4ca4b6c1
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bridge
+          persist-credentials: false
+
       - name: Fetch reviewed Proto Contract revision
         run: |
           set -euo pipefail
@@ -104,6 +109,9 @@ jobs:
           git -C proto-contract remote add origin https://github.com/dunkymole/proto-contract.git
           git -C proto-contract fetch --depth=1 origin "$PROTO_CONTRACT_REVIEWED_REF"
           git -C proto-contract checkout --detach FETCH_HEAD
+
+      - name: Adapt pinned Proto Contract fixtures to target labels
+        run: git -C proto-contract apply ../bridge/test/proto-contract/labels.patch
 
       - name: Run native and actual-package matrix against this bridge revision
         run: pwsh ./scripts/test-all.ps1

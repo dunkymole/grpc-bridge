@@ -15,8 +15,9 @@ FROM scratch
 COPY --from=bridge /bridge /bridge
 COPY --from=bridge /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=browser /src/web/dist /web
+COPY config/targets.json /config/targets.json
 USER 65532:65532
-ENV LISTEN=0.0.0.0:8080 ASSETS=/web
+ENV LISTEN=0.0.0.0:8080 ASSETS=/web TARGETS_FILE=/config/targets.json
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s CMD ["/bridge", "-healthcheck"]
 ENTRYPOINT ["/bridge"]

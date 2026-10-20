@@ -214,7 +214,7 @@ func readServerFrame(reader *bufio.Reader) (byte, []byte, error) {
 
 func TestWSSLocalCATrustAndRejection(t *testing.T) {
 	cert, roots, _ := testTLSCertificate(t)
-	g := newGateway(config{upstream: startTCPEcho(t), origin: "https://client.example", maxConnections: 2})
+	g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, startTCPEcho(t), false), origin: "https://client.example", maxConnections: 2})
 	defer g.stop()
 	server := httptest.NewUnstartedServer(g)
 	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}}
@@ -293,7 +293,7 @@ func TestUpstreamTLSRequiresTrustAndH2ALPN(t *testing.T) {
 				}
 				address = net.JoinHostPort("127.0.0.1", port)
 			}
-			g := newGateway(config{upstream: address, origin: "http://localhost", upstreamTLS: true, upstreamRoots: tc.trust, maxConnections: 1})
+			g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(t, address, true), origin: "http://localhost", upstreamRoots: tc.trust, maxConnections: 1})
 			defer g.stop()
 			server := httptest.NewServer(g)
 			defer server.Close()
@@ -386,14 +386,14 @@ func TestBridgeProcessUsesSSL_CERT_FILEForWSSAndUpstream(t *testing.T) {
 	}
 	cmd := exec.Command(binary)
 	cmd.Env = append(filteredEnvironment(
-		"SSL_CERT_FILE", "LISTEN", "UPSTREAM", "UPSTREAM_TLS", "TLS_CERT", "TLS_KEY", "ALLOWED_ORIGIN",
+		"SSL_CERT_FILE", "LISTEN", "DEFAULT_TARGET", "TLS_CERT", "TLS_KEY", "ALLOWED_ORIGIN",
 		"TUNNEL_TOKEN", "ADMISSION_URL", "TARGETS_FILE", "HEALTH_LISTEN", "MAX_CONNECTIONS",
 		"MAX_CONNECTIONS_PER_PRINCIPAL", "MAX_ADMISSION_GRANT_LIFETIME", "MAX_TUNNEL_LIFETIME", "DRAIN_GRACE_PERIOD",
 	),
 		"SSL_CERT_FILE="+rootsPath,
 		"LISTEN="+listenAddress,
-		"UPSTREAM="+upstream,
-		"UPSTREAM_TLS=true",
+		"DEFAULT_TARGET=demo",
+		"TARGETS_FILE="+testTargetsFile(t, upstream, true),
 		"TLS_CERT="+certPath,
 		"TLS_KEY="+keyPath,
 		"ALLOWED_ORIGIN=https://client.example",

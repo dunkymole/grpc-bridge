@@ -177,8 +177,8 @@
         ><strong>Python · gRPC</strong>
       </div>
       <div class="connection">
-        <label for="target">Backend destination</label>
-        <input id="target" value="python-demo:50051" autocomplete="off" />
+        <label for="target">Backend label</label>
+        <input id="target" value="demo" autocomplete="off" />
         <label for="token">Tunnel token</label
         ><input
           id="token"
@@ -189,7 +189,8 @@
         ><button id="disconnect" class="secondary" disabled>Disconnect</button
         ><span id="status" role="status">Disconnected</span>
       </div>
-      <label><input type="checkbox" id="forward-token" />
+      <label
+        ><input type="checkbox" id="forward-token" />
         Send tunnel token to the selected backend as a bearer token (on connect)
       </label>
       <div class="grid">

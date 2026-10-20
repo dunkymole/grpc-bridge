@@ -37,7 +37,7 @@ func BenchmarkTunnelTLSOverhead(b *testing.B) {
 					go func() { defer conn.Close(); _, _ = io.Copy(conn, conn) }()
 				}
 			}()
-			g := newGateway(config{upstream: backend.Addr().String(), maxConnections: 1})
+			g := newGateway(config{defaultTarget: "demo", targetsFile: testTargetsFile(b, backend.Addr().String(), false), maxConnections: 1})
 			server := httptest.NewUnstartedServer(g)
 			if encrypted {
 				server.StartTLS()

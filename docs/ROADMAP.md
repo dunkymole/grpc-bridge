@@ -12,7 +12,7 @@
 - [x] Versioned channel profile, optional auth, origin checks, fixed memory buffers.
 - [x] Repeatable unit, fuzz, and Python interoperability tests.
 
-- [x] Runnable TypeScript examples and client-selected, live-allowlisted destinations.
+- [x] Runnable TypeScript examples and client-selected, live-allowlisted backend labels.
 - [x] Packable TypeScript library with declarations, lifecycle events, token providers, and explicit connection reuse.
 
 ## v0.2 — protocol hardening

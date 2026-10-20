@@ -36,10 +36,10 @@ JSON handshake or custom per-RPC framing.
   Only the profile is selected/echoed. Constant-time credential comparison.
 - Browser Origin must exactly match the configured scheme/host/port; missing
   Origin is permitted for native clients. Never use Origin as authentication.
-- The client selects `host:port` through the outer `target` query parameter.
-  A bounded JSON allowlist is reread for each non-default selection. The bridge
-  resolves the allowed address and connects before sending 101. Missing targets
-  use `UPSTREAM`. See [routing](CLIENT-AND-ROUTING.md). Dial
+- The client selects a logical label through the outer `target` query parameter.
+  A bounded JSON label-to-address policy is reread for every new tunnel. The
+  bridge resolves the mapped address and connects before sending 101. An omitted
+  target uses the configured `DEFAULT_TARGET` label. See [routing](CLIENT-AND-ROUTING.md). Dial
   failure returns 502; connection capacity returns 503; authentication returns
   401; invalid framing/profile returns 400; denied origin returns 403.
 - After upgrade, binary and continuation payloads form a continuous byte stream.

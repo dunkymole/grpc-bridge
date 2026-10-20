@@ -35,7 +35,7 @@ export async function runChecks(url: string, token: string) {
   passed.push("installed public exports");
   const connection = await bridge.openBridgeConnection({
     url,
-    target: "python-demo:50051",
+    target: "demo",
     tunnelToken: token,
   });
   try {
