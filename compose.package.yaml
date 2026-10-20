@@ -15,6 +15,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.package-consumer
+      args:
+        PACKAGE_INSTALL_SOURCE: ${PACKAGE_INSTALL_SOURCE:-local}
       additional_contexts:
         package-artifact: ${PACKAGE_ARTIFACT_DIR:?Run npm run package:consumer}
     environment:

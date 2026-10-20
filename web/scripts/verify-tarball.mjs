@@ -12,8 +12,16 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { auditFileList, auditMap } from "./package-audit-lib.mjs";
+import { captureSource, sourceProvenance } from "./release-provenance-lib.mjs";
 
 assert.ok(process.env.npm_execpath, "run through npm run package:verify");
+const beforeSource = captureSource();
+if (process.env.PACKAGE_REQUIRE_CLEAN === "1")
+  assert.equal(
+    beforeSource?.dirty,
+    false,
+    "release evidence requires a clean Git checkout",
+  );
 const staging = await mkdtemp(join(tmpdir(), "grpc-bridge-pack-"));
 try {
   const [metadata] = JSON.parse(
@@ -96,6 +104,24 @@ try {
   const integrity =
     "sha512-" + createHash("sha512").update(bytes).digest("base64");
   assert.equal(metadata.integrity, integrity, "npm integrity mismatch");
+  const source = sourceProvenance(beforeSource, captureSource());
+  if (process.env.PACKAGE_REQUIRE_CLEAN === "1")
+    assert.equal(
+      source.verifiedClean,
+      true,
+      "source identity/clean state changed across packing",
+    );
+  const toolchain = {
+    node: process.version,
+    npm: execFileSync(
+      process.execPath,
+      [process.env.npm_execpath, "--version"],
+      { encoding: "utf8" },
+    ).trim(),
+    typescript: JSON.parse(
+      await readFile("node_modules/typescript/package.json", "utf8"),
+    ).version,
+  };
   const output = resolve(
     process.env.PACKAGE_OUTPUT_DIR ?? "test-results/package",
   );
@@ -115,6 +141,20 @@ try {
     unpackedBytes: metadata.unpackedSize,
     fileCount: paths.length,
     mapsAndSourcesVerified: true,
+    source,
+    toolchain,
+    packageLockSha256: createHash("sha256")
+      .update(await readFile("package-lock.json"))
+      .digest("hex"),
+    ci:
+      process.env.GITHUB_ACTIONS === "true"
+        ? {
+            repository: process.env.GITHUB_REPOSITORY,
+            runId: process.env.GITHUB_RUN_ID,
+            event: process.env.GITHUB_EVENT_NAME,
+            ref: process.env.GITHUB_REF,
+          }
+        : null,
     files: metadata.files,
   };
   await writeFile(

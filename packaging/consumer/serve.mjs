@@ -8,6 +8,10 @@ const audit = JSON.parse(
 const installed = JSON.parse(
   await readFile("node_modules/@dunkymole/grpc-bridge/package.json", "utf8"),
 );
+const installedLock = JSON.parse(await readFile("package-lock.json", "utf8"));
+const installedResolution =
+  installedLock.packages["node_modules/@dunkymole/grpc-bridge"];
+const installSource = process.env.PACKAGE_INSTALL_SOURCE ?? "local";
 assert.equal(installed.name, audit.name);
 assert.equal(installed.version, audit.version);
 const checks = await runChecks(
@@ -25,6 +29,11 @@ await writeFile(
       compilerRevision: process.env.PROTO_CONTRACT_REVISION,
       artifactSha256: audit.sha256,
       packageVersion: installed.version,
+      installSource,
+      installedResolution: {
+        resolved: installedResolution.resolved,
+        integrity: installedResolution.integrity,
+      },
       checks,
       ...bundle,
     },
@@ -38,7 +47,10 @@ const html =
 const server = createServer(async (request, response) => {
   const path = new URL(request.url, "http://consumer").pathname;
   if (path === "/health") {
-    response.end("ok");
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify({ artifactSha256: audit.sha256, installSource }),
+    );
     return;
   }
   if (path === "/") {

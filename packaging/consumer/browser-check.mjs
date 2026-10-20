@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { chromium, firefox, webkit } from "playwright";
 import { writeFile } from "node:fs/promises";
 const results = [];
+const metadataResponse = await fetch("http://package-consumer:8081/health");
+assert.equal(metadataResponse.ok, true);
+const metadata = await metadataResponse.json();
 for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
   const browser = await engine.launch();
   try {
@@ -26,5 +29,14 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
 }
 await writeFile(
   "/results/consumer-browsers.json",
-  JSON.stringify({ status: "PASS", results }, null, 2),
+  JSON.stringify(
+    {
+      status: "PASS",
+      artifactSha256: metadata.artifactSha256,
+      installSource: metadata.installSource,
+      results,
+    },
+    null,
+    2,
+  ),
 );

@@ -93,3 +93,63 @@ test("consumer rejects tampering, unreviewed bounds and stale resolutions", () =
     );
   }
 });
+test("registry postflight uses exact public registry resolution and expected integrity", () => {
+  const f = fixture();
+  const registryMetadata = {
+    ...f.manifest,
+    dist: {
+      integrity: f.audit.integrity,
+      tarball:
+        "https://registry.npmjs.org/@dunkymole/grpc-bridge/-/grpc-bridge-0.2.0.tgz",
+    },
+  };
+  const options = { installSource: "registry", registryMetadata };
+  const bound = bindAuditedArtifact(
+    f.consumer,
+    f.lock,
+    f.manifest,
+    f.audit,
+    f.bytes,
+    options,
+  );
+  assert.equal(bound.consumer.dependencies[f.manifest.name], "0.2.0");
+  assert.equal(
+    bound.lock.packages[`node_modules/${f.manifest.name}`].resolved,
+    registryMetadata.dist.tarball,
+  );
+  for (const change of [
+    (m) => {
+      m.version = "0.1.0";
+    },
+    (m) => {
+      m.dist.integrity = "sha512-wrong";
+    },
+    (m) => {
+      m.dependencies = {};
+    },
+    (m) => {
+      m.dist.tarball = "file:/artifact/package.tgz";
+    },
+    (m) => {
+      m.dist.tarball = "https://example.com/other.tgz";
+    },
+    (m) => {
+      m.dist.tarball =
+        "https://token@registry.npmjs.org/@dunkymole/grpc-bridge/-/pkg.tgz";
+    },
+  ]) {
+    const metadata = structuredClone(registryMetadata);
+    change(metadata);
+    assert.throws(() =>
+      bindAuditedArtifact(f.consumer, f.lock, f.manifest, f.audit, f.bytes, {
+        installSource: "registry",
+        registryMetadata: metadata,
+      }),
+    );
+  }
+  assert.throws(() =>
+    bindAuditedArtifact(f.consumer, f.lock, f.manifest, f.audit, f.bytes, {
+      installSource: "unknown",
+    }),
+  );
+});
