@@ -111,7 +111,7 @@ def tag_target(v):
 
 def absent(v):
     require(tag_target(v) is None, 'version tag already exists')
-    require(api(f'releases/tags/v{v}', optional=True) is None, 'release already exists')
+    require(find_release(v) is None, 'release already exists')
     require(registry(f'/{v}', optional=True) is None, 'npm version already exists')
 
 
@@ -271,6 +271,18 @@ def files_at(directory):
     return files
 
 
+def find_release(v):
+    release = api(f'releases/tags/v{v}', optional=True)
+    if release is not None:
+        return release
+    # GitHub's by-tag endpoint omits unpublished drafts. Enumerate authenticated
+    # releases, including all pages, before deciding that creation is necessary.
+    pages = json.loads(run('gh', 'api', f'repos/{REPO}/releases?per_page=100', '--paginate', '--slurp'))
+    matches = [release for page in pages for release in page if release['tag_name'] == f'v{v}']
+    require(len(matches) <= 1, 'multiple releases have the selected tag; inspect before resuming')
+    return matches[0] if matches else None
+
+
 def verify_bundle(directory, v, commit, run_id, artifact_id):
     files = files_at(directory)
     audit = json.loads(files['package-audit.json'])
@@ -303,7 +315,7 @@ def verify_bundle(directory, v, commit, run_id, artifact_id):
 def release_state(v, commit, body, files, dist_tag):
     target = tag_target(v)
     require(target is None or target == commit, 'existing tag references another commit; never move it')
-    release = api(f'releases/tags/v{v}', optional=True)
+    release = find_release(v)
     if release is not None:
         require(target == commit and release['body'] == body and release['prerelease'] == (dist_tag != 'latest'),
                 'existing release belongs to another candidate/policy')
@@ -397,13 +409,13 @@ def publish(v, commit, run_id, artifact_id, dist_tag, dry_run=False, out=None):
 
 
 def wait_registry(v, audit, dist_tag):
-    for attempt in range(4):
+    for attempt in range(20):
         published = check_registry(v, audit)
         package = registry(optional=True)
         if published and (package or {}).get('dist-tags', {}).get(dist_tag) == v:
             return
-        if attempt < 3:
-            time.sleep(10)
+        if attempt < 19:
+            time.sleep(15)
     raise ValueError('npm version/dist-tag did not propagate; preserve candidate and retry verification')
 
 

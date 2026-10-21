@@ -136,7 +136,7 @@ python scripts/release.py verify --version $version --commit $commit --run-id $r
 
 It downloads fresh GitHub assets, checks inventory/SHA256SUMS, expected source/tag/
 candidate identity, compiler/lock, release status/latest and npm version/dist-tag/
-integrity. Missing registry state gets four attempts, ten seconds apart; conflicting
+integrity. Missing registry state gets twenty attempts, fifteen seconds apart; conflicting
 bytes fail immediately. The existing clean consumer installs from the actual
 registry, regenerates a contract and tests Node/Chromium/Firefox/WebKit RPC shapes,
 deadlines and cancellation. Original candidate reports remain intact; registry
@@ -147,6 +147,11 @@ link/attach it to the release when reporting completion.
 - **Interrupted publication:** rerun publish with the same approved inputs. Matching
   npm bytes/assets are reused. The selected npm dist-tag can be restored only after
   backward-movement checks. Conflicting bytes/commits/candidate/policy stop the tool.
+- **Registry processing:** npm may accept an upload before it is publicly readable.
+  If processing outlasts the retry window, retain the candidate and wait for that
+  exact version/integrity to become visible before resuming; do not upload it again.
+  Draft lookup includes authenticated release listings because GitHub's lookup by
+  tag omits unpublished drafts. Existing candidate/asset checks still apply.
 - **Failed draft upload:** inspect and, if appropriate, manually remove only that
   failed unpublished asset, then resume. No automatic clobber/delete is performed.
 - **Verification failure:** preserve candidate/completed steps/failure output; retry
