@@ -94,7 +94,7 @@ class ReleaseTests(unittest.TestCase):
                     r.bump(V, COMMIT, 'Changes')
                 absent.assert_not_called()
         for tag, release, registry in [(TREE, None, None), (None, {}, None), (None, None, {})]:
-            with patch.object(r, 'tag_target', return_value=tag), patch.object(r, 'api', return_value=release), \
+            with patch.object(r, 'tag_target', return_value=tag), patch.object(r, 'find_release', return_value=release), \
                     patch.object(r, 'registry', return_value=registry):
                 with self.assertRaises(ValueError):
                     r.absent(V)
@@ -180,6 +180,21 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'never move'):
                 r.release_state(V, COMMIT, 'notes', files, 'latest')
 
+    def test_draft_discovery_checks_all_pages_after_by_tag_404(self):
+        draft = {'id': 1234, 'tag_name': f'v{V}', 'draft': True}
+        pages = [[{'tag_name': 'v0.1.0'}], [draft]]
+        with patch.object(r, 'api', return_value=None), patch.object(r, 'run', return_value=json.dumps(pages)) as run:
+            self.assertEqual(r.find_release(V), draft)
+            self.assertIn('--paginate', run.call_args.args)
+            self.assertIn('--slurp', run.call_args.args)
+        with patch.object(r, 'api', return_value=None), patch.object(r, 'run', return_value=json.dumps([[]])):
+            self.assertIsNone(r.find_release(V))
+        with patch.object(r, 'api', return_value=None), patch.object(r, 'run', return_value=json.dumps([[draft], [draft]])):
+            with self.assertRaisesRegex(ValueError, 'multiple releases'):
+                r.find_release(V)
+        with patch.object(r, 'api', return_value=draft), patch.object(r, 'run') as run:
+            self.assertEqual(r.find_release(V), draft)
+            run.assert_not_called()
     def test_registry_conflicts_and_backwards_tag_fail(self):
         with patch.object(r, 'registry', return_value={'name': r.PACKAGE, 'version': V, 'dist': {'integrity': 'wrong'}}):
             with self.assertRaisesRegex(ValueError, 'conflicts'):
@@ -311,7 +326,7 @@ class ReleaseTests(unittest.TestCase):
                 patch.object(r.time, 'sleep') as sleep:
             with self.assertRaisesRegex(ValueError, 'propagate'):
                 r.wait_registry(V, {}, 'latest')
-            self.assertEqual(sleep.call_count, 3)
+            self.assertEqual(sleep.call_count, 19)
         with patch.object(r, 'check_registry', side_effect=ValueError('conflicting bytes')), patch.object(r.time, 'sleep') as sleep:
             with self.assertRaisesRegex(ValueError, 'conflicting bytes'):
                 r.wait_registry(V, {}, 'latest')

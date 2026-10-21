@@ -7,6 +7,12 @@ client.
 
 ## Install
 
+Install the [published npm package](https://www.npmjs.com/package/@dunkymole/grpc-bridge):
+
+```sh
+npm install @dunkymole/grpc-bridge @connectrpc/connect@2.2.0 @bufbuild/protobuf@2.15.0
+```
+
 This change is an intentional pre-1.0 breaking release: package version `0.2.0`
 makes contract-bound clients the main entry point. Build a local tarball from
 `web/` with `npm ci && npm pack`, then install it alongside the tested Connect
