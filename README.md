@@ -77,8 +77,8 @@ For independent consumers, create one `SharedBridgeConnection` with
 `acquire()` and `release()`; the first acquisition opens the connection and
 the last release closes it. The owner calls `dispose()` at shutdown or logout.
 
-The reusable package is prepared as `@dunkymole/grpc-bridge` but is not yet
-published to npm. Follow the [local installation steps](web/README.md#install)
+The reusable package is [published on npm](https://www.npmjs.com/package/@dunkymole/grpc-bridge).
+Install it with `npm install @dunkymole/grpc-bridge`; follow the [installation guide](web/README.md#install)
 to use the package imports below in your own project. Generate your service
 descriptors with Protobuf-ES; demo descriptors are not included in the package.
 

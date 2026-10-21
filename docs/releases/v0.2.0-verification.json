@@ -1,0 +1,144 @@
+{
+  "format": 1,
+  "repository": "dunkymole/grpc-bridge",
+  "version": "0.2.0",
+  "sourceRevision": "56a7fc57078d4003553a4b0e5ec048c4bf9abef2",
+  "sourceTree": "a99e2ec5392d24a30c532b2884d9b5fe760c1bbe",
+  "compilerRevision": "6d028e3632e7b027f380cbc6b0449dfe4ca4b6c1",
+  "workflowRunId": 39462087302,
+  "workflowAttempt": 1,
+  "artifactId": 12283003467,
+  "artifactDigest": "sha256:a32b598d55de5e1ff92e9b056e3e3a6ab7450eef7767b3f72de69b1c18e1c528",
+  "toolchain": {
+    "node": "v24.21.0",
+    "npm": "11.19.0",
+    "typescript": "5.9.3"
+  },
+  "status": "PASS",
+  "distTag": "latest",
+  "releaseUrl": "https://github.com/dunkymole/grpc-bridge/releases/tag/v0.2.0",
+  "registryConsumer": "Node, Chromium, Firefox, WebKit",
+  "publicWrites": [],
+  "nodeReport": {
+    "status": "PASS",
+    "node": "v24.21.0",
+    "compilerRevision": "6d028e3632e7b027f380cbc6b0449dfe4ca4b6c1",
+    "artifactSha256": "124a8397904a23a142678d8564e8b799310da8b9a44ec82124edddf4ab614d2c",
+    "packageVersion": "0.2.0",
+    "installSource": "registry",
+    "installedResolution": {
+      "resolved": "https://registry.npmjs.org/@dunkymole/grpc-bridge/-/grpc-bridge-0.2.0.tgz",
+      "integrity": "sha512-Zk8TNFzbWzfH01ye6pPlaJNyhrDdfVfIS+fTZbAYh0bVygJ//k84wp92NwYeUmXXUoZKKt3bdsbvEJ7kuQBmqQ=="
+    },
+    "checks": [
+      "installed public exports",
+      "generated strict construction and declarations",
+      "unary and trailers",
+      "server streaming",
+      "client streaming",
+      "live bidi before request half-close",
+      "deadline",
+      "cancellation"
+    ],
+    "fixtureBundleBytes": 138968,
+    "fixtureBundleGzipBytes": 40630,
+    "fixtureBundleGzipLevel": 6,
+    "browserEntry": {
+      "minifiedBytes": 88113,
+      "gzipBytes": 27303,
+      "gzipLevel": 9,
+      "esbuild": "0.28.2",
+      "platform": "browser",
+      "format": "esm",
+      "target": "es2022",
+      "dependenciesBundled": true,
+      "publicExports": [
+        "SharedBridgeConnection",
+        "createBridgeConnection",
+        "createSharedBridgeConnection",
+        "inputQueue",
+        "openBridgeConnection",
+        "waitForReady"
+      ]
+    },
+    "bridgeInputs": [
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/errors.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/retry.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/interceptors.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/recovery.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/bytes.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/flow.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/frames/types.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/frames/codec.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/hpack/huffman-table.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/hpack/huffman.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/hpack/static-table.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/hpack/hpack.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/stream.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/h2/connection.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/channel.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/framing.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/transport.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/client.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/contracts.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/strict-client.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/queue.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/index.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/raw.js",
+      "node_modules/@dunkymole/grpc-bridge/package-dist/codegen.js"
+    ]
+  },
+  "browserReport": {
+    "status": "PASS",
+    "artifactSha256": "124a8397904a23a142678d8564e8b799310da8b9a44ec82124edddf4ab614d2c",
+    "installSource": "registry",
+    "results": [
+      {
+        "name": "chromium",
+        "version": "153.0.8010.12",
+        "checks": [
+          "installed public exports",
+          "generated strict construction and declarations",
+          "unary and trailers",
+          "server streaming",
+          "client streaming",
+          "live bidi before request half-close",
+          "deadline",
+          "cancellation"
+        ],
+        "status": "PASS"
+      },
+      {
+        "name": "firefox",
+        "version": "155.0",
+        "checks": [
+          "installed public exports",
+          "generated strict construction and declarations",
+          "unary and trailers",
+          "server streaming",
+          "client streaming",
+          "live bidi before request half-close",
+          "deadline",
+          "cancellation"
+        ],
+        "status": "PASS"
+      },
+      {
+        "name": "webkit",
+        "version": "26.6",
+        "checks": [
+          "installed public exports",
+          "generated strict construction and declarations",
+          "unary and trailers",
+          "server streaming",
+          "client streaming",
+          "live bidi before request half-close",
+          "deadline",
+          "cancellation"
+        ],
+        "status": "PASS"
+      }
+    ]
+  },
+  "tarballSha256": "124a8397904a23a142678d8564e8b799310da8b9a44ec82124edddf4ab614d2c"
+}
