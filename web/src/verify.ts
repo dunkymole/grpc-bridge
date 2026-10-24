@@ -19,14 +19,15 @@ async function code(run: () => Promise<unknown>, expected: Code) {
 export async function runChecks(
   client: Client<typeof DemoService>,
   report: (message: string) => void,
+  backendName = "Python",
 ) {
   let trailer = "";
   const echo = await client.echo(
-    { text: "browser → Python ✓" },
+    { text: `browser → ${backendName} ✓` },
     { onTrailer: (t) => (trailer = t.get("demo-trailer") ?? "") },
   );
   check(
-    echo.text === "browser → Python ✓" && trailer === "echo-complete",
+    echo.text === `browser → ${backendName} ✓` && trailer === "echo-complete",
     "echo/trailers",
   );
   report("PASS unary protobuf + trailers");
@@ -47,13 +48,13 @@ export async function runChecks(
   let first = replies.next();
   await queue.send({ text: "one" });
   check(
-    (await first).value?.text === "Python received: one",
+    (await first).value?.text === `${backendName} received: one`,
     "first bidi response before half-close",
   );
   first = replies.next();
   await queue.send({ text: "two" });
   check(
-    (await first).value?.text === "Python received: two",
+    (await first).value?.text === `${backendName} received: two`,
     "second bidi response",
   );
   await queue.complete();

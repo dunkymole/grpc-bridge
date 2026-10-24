@@ -1,5 +1,6 @@
 {
   "targets": {
-    "demo": { "address": "python-demo:50051", "tls": false }
+    "demo": { "address": "python-demo:50051", "tls": false },
+    "dotnet-demo": { "address": "dotnet-demo:50051", "tls": false }
   }
 }

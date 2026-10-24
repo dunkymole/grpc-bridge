@@ -14,7 +14,7 @@ The [CI workflow](../.github/workflows/ci.yml) runs on pushes and pull requests:
 | `docker compose up --build -d --wait` | Build the bridge and Python backend and wait for health checks. |
 | `npm run test:e2e && npm run example` in `web/` | All RPC shapes through the actual WebSocket relay, live routing changes, metadata, shared leases, recovery, and runnable examples. |
 | `npm run benchmark:smoke` in `web/` | Ramped tunnel/RPC load, all RPC shapes, large messages, slow consumption, cancellation, churn, and bounded post-load resource recovery. |
-| Pinned Playwright Compose project | Strict-contract browser clients in Chromium, Firefox, and WebKit. |
+| Pinned Playwright Compose project | Strict-contract browser clients in Chromium, Firefox, and WebKit, including simultaneous Python and .NET destinations. |
 | `scripts/run-autobahn.sh` | Pinned Autobahn subset with exact case-policy and report validation. |
 | `go test -race ./...` | Includes local-CA WSS/upstream ALPN and process trust checks, plus health/shutdown cases. |
 | `proposed-contract-pair` workflow job | Full Proto Contract matrix and rollout against the event's proposed bridge revision. |
@@ -47,16 +47,44 @@ The loss case checks that an in-flight operation fails and recovery does not rep
 it. This is an automated compatibility smoke matrix for those pinned engines, not
 a certification of every browser version or operating system.
 
+The multi-backend case opens two WebSockets and therefore two independent HTTP/2
+sessions through the same opaque bridge process:
+
+```text
+browser strict client ─ WebSocket/HTTP2 A ─ bridge ─ h2c ─ Python backend
+                      └ WebSocket/HTTP2 B ─ bridge ─ h2c ─ .NET backend
+```
+
+Both clients use the same generated `DemoContract`; only the policy label differs.
+All four RPC shapes run simultaneously against both implementations. The test then
+cancels a Python RPC, drops only the Python tunnel, and closes its managed channel,
+checking after each fault that an active or fresh .NET RPC still succeeds. The .NET
+service is generated from the repository's existing `proto/demo.proto`; the relay
+contains no language- or backend-specific path.
+
+This fixture intentionally does not rebuild the cross-language contract matrix or
+rollout/rollback scenarios. The existing `proposed-contract-pair` job remains the
+authority for those shared Proto Contract fixtures; this addition consumes the
+same reviewed generated contract at the browser and simultaneous-tunnel layer.
+
+The optional overlay adds one container limited to 128 MiB and 128 PIDs. During the
+fixture the bridge carries two 16 KiB relay payload buffers per tunnel (one in
+each direction),
+plus the documented HTTP/2, runtime, socket, and kernel overhead. The browser-test
+container remains limited by its existing 1 GiB shared-memory allocation. These are
+configured bounds and topology costs, not measured steady-state usage.
+
 Run the suite in an isolated Compose project and host port so it does not share a
 local bridge stack:
 
 ```sh
 BRIDGE_PORT=18081 \
   docker compose --project-name grpc-bridge-browser-gates \
-  -f compose.yaml -f compose.browser.yaml \
+  -f compose.yaml -f compose.multi-backend.yaml -f compose.browser.yaml \
   up --build --abort-on-container-exit --exit-code-from browser-test
 docker compose --project-name grpc-bridge-browser-gates \
-  -f compose.yaml -f compose.browser.yaml down --remove-orphans
+  -f compose.yaml -f compose.multi-backend.yaml -f compose.browser.yaml \
+  down --remove-orphans
 ```
 
 Reports are written under `web/test-results/`. The same core checks passed in

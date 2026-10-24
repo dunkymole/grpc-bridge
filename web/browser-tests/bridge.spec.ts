@@ -12,6 +12,17 @@ test.beforeEach(async ({ page, browser }, testInfo) => {
       configurable: false,
       value: sockets,
     });
+    Object.defineProperty(window, "__bridgeTestDropTunnel", {
+      configurable: false,
+      value: (target: string) => {
+        const socket = [...sockets].reverse().find((candidate) =>
+          candidate.readyState === WebSocket.OPEN &&
+          new URL(candidate.url).searchParams.get("target") === target
+        );
+        if (!socket) throw new Error(`No open tunnel for ${target}`);
+        socket.close();
+      },
+    });
     globalThis.WebSocket = class extends NativeWebSocket {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols);
@@ -68,4 +79,22 @@ test("connection loss fails the active stream and later calls recover without re
     "fresh after recovery",
     { timeout: 15_000 },
   );
+});
+
+test("simultaneous Python and .NET channels remain isolated", async ({ page }) => {
+  await page.getByRole("button", { name: "Run Python + .NET checks" }).click();
+  const output = page.locator("#multi-check-output");
+  await expect(output).toContainText("ALL MULTI-BACKEND CHECKS PASSED", {
+    timeout: 90_000,
+  });
+  for (const result of [
+    "Python · PASS unary protobuf + trailers",
+    ".NET · PASS unary protobuf + trailers",
+    "PASS simultaneous strict-client checks on both backends",
+    "PASS cancellation on Python does not disrupt .NET",
+    "PASS connection loss on Python does not disrupt .NET",
+    "PASS cleanup of Python channel does not disrupt .NET",
+  ]) {
+    await expect(output).toContainText(result);
+  }
 });

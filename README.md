@@ -38,6 +38,16 @@ Open **http://localhost:8080**, click **Connect**, then **Run interoperability c
 You can also interact with all four examples independently. Start counting and
 send chat messages at the same time: both RPCs share the same HTTP/2 connection.
 
+To run the optional simultaneous Python + .NET fixture, start the overlay and
+click **Run Python + .NET checks**. It opens one tunnel per backend and runs all
+four RPC shapes on both at the same time:
+
+```sh
+docker compose -f compose.yaml -f compose.multi-backend.yaml up --build -d --wait
+docker compose -f compose.yaml -f compose.multi-backend.yaml logs -f
+docker compose -f compose.yaml -f compose.multi-backend.yaml down
+```
+
 ```sh
 docker compose logs -f
 docker compose down
@@ -61,7 +71,10 @@ Compose network; it exposes no host port. No API keys or cloud services required
 - Fixed-size relay buffers, connection admission limits, ping/pong, write deadlines.
 - HTTPS/WSS and verified TLS to the backend as deployment options.
 - Client-selected logical backend labels with a live, server-owned address and TLS policy.
-- Two non-root, read-only containers. The bridge is a static binary in `scratch`.
+- Two non-root, read-only containers by default; the optional .NET fixture adds a
+  third. The bridge is a static binary in `scratch`.
+- An optional generated-contract .NET backend and simultaneous two-destination
+  browser fixture; no backend-specific relay code.
 
 **Zero dependencies applies to the bridge:** Go standard library only, no Go
 modules beyond this repository, no libc, shell, package manager, or runtime daemon
