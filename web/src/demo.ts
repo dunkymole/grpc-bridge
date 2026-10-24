@@ -8,6 +8,13 @@ import { contract as DemoContract } from "./gen/demo_contract.js";
 import { openBridgeConnection, type BridgeConnection } from "./index.js";
 import { inputQueue } from "./queue.js";
 import { runChecks } from "./verify.js";
+import { runMultiBackendChecks } from "./multi-backend.js";
+
+declare global {
+  interface Window {
+    __bridgeTestDropTunnel?: (target: "demo" | "dotnet-demo") => void;
+  }
+}
 
 const el = (id: string) => document.getElementById(id)!;
 const value = (id: string) => (el(id) as HTMLInputElement).value;
@@ -153,5 +160,22 @@ action("verify", "check-output", async () => {
     log("check-output", "ALL CHECKS PASSED");
   } finally {
     button("verify").disabled = !client;
+  }
+});
+action("verify-multi", "multi-check-output", async () => {
+  button("verify-multi").disabled = true;
+  el("multi-check-output").textContent = "Running…";
+  try {
+    await runMultiBackendChecks(
+      {
+        url: `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/tunnel`,
+        tunnelToken: value("token"),
+        dropTunnel: window.__bridgeTestDropTunnel,
+      },
+      (message) => log("multi-check-output", message),
+    );
+    log("multi-check-output", "ALL MULTI-BACKEND CHECKS PASSED");
+  } finally {
+    button("verify-multi").disabled = false;
   }
 });

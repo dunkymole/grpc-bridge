@@ -169,12 +169,13 @@
       <div class="eyebrow">OPEN SOURCE / TRANSPORT LAB</div>
       <h1>Native gRPC. In your browser.</h1>
       <p>
-        One connection. Four RPC patterns. A tiny bridge that just moves bytes.
+        One or more isolated connections. Four RPC patterns. A tiny bridge that
+        just moves bytes.
       </p>
       <div class="architecture">
         <strong>Browser · HTTP/2</strong><span>← WebSocket →</span
         ><strong>Go bridge</strong><span>← h2c →</span
-        ><strong>Python · gRPC</strong>
+        ><strong>Python / .NET · gRPC</strong>
       </div>
       <div class="connection">
         <label for="target">Backend label</label>
@@ -263,6 +264,13 @@
         ><output id="check-output" aria-live="polite"
           >Checks exercise the real Python service over this single
           connection.</output
+        >
+      </div>
+      <div id="multi-checks">
+        <button id="verify-multi">Run Python + .NET checks</button
+        ><output id="multi-check-output" aria-live="polite"
+          >Starts two simultaneous strict-client tunnels to independent backend
+          implementations. Start the multi-backend Compose overlay first.</output
         >
       </div>
       <p class="footer">

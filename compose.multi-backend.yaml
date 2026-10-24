@@ -1,0 +1,17 @@
+services:
+  bridge:
+    depends_on:
+      dotnet-backend:
+        condition: service_healthy
+  dotnet-backend:
+    networks:
+      default:
+        aliases: [dotnet-demo]
+    build:
+      context: .
+      dockerfile: backend-dotnet/Dockerfile
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 128
