@@ -123,6 +123,11 @@ func TestAdmissionOutageDuringEstablishedTraffic(t *testing.T) {
 				}
 			}
 			workers.Wait()
+			for index, reason := range failureReasons {
+				if reason == "admission" && g.metrics.failures[index].Load() != 8 {
+					t.Fatalf("admission failure metric = %d, want 8", g.metrics.failures[index].Load())
+				}
+			}
 			if dials.Load() != 1 {
 				t.Fatalf("failed admission dialed upstream: %d", dials.Load())
 			}
@@ -184,5 +189,10 @@ func TestTunnelLifetimeExpiresDuringContinuousTraffic(t *testing.T) {
 			t.Fatal("no successful traffic before expiry")
 		}
 		awaitLoadCleanup(t, g)
+	}
+	for index, source := range expirationSources {
+		if source == "lifetime" && g.metrics.expirations[index].Load() != 3 {
+			t.Fatalf("lifetime expiry metric = %d, want 3", g.metrics.expirations[index].Load())
+		}
 	}
 }

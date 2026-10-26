@@ -1,0 +1,43 @@
+groups:
+  - name: grpc-bridge-example-alerts
+    rules:
+      # Example thresholds only. Calibrate with representative workload evidence.
+      - alert: GrpcBridgeSustainedCapacityPressure
+        expr: bridge_active_tunnels / clamp_min(bridge_tunnel_capacity, 1) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          threshold_status: example
+        annotations:
+          summary: Bridge instance has sustained admission-slot pressure
+          description: '{{ $labels.instance }} has used over 90% of its process-local tunnel capacity for 10 minutes.'
+
+      - alert: GrpcBridgeDialFailureSpike
+        expr: sum by (job, instance) (rate(bridge_connection_failures_total{reason="dial"}[5m])) / clamp_min(sum by (job, instance) (rate(bridge_connection_attempts_total[5m])), 0.001) > 0.05 and sum by (job, instance) (rate(bridge_connection_attempts_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          threshold_status: example
+        annotations:
+          summary: Bridge backend dial failures are elevated
+          description: 'More than 5% of attempts at {{ $labels.instance }} have failed backend dialing for 5 minutes.'
+
+      - alert: GrpcBridgeAdmissionRejectionSpike
+        expr: sum by (job, instance) (rate(bridge_connection_failures_total{reason=~"auth|admission|capacity"}[5m])) / clamp_min(sum by (job, instance) (rate(bridge_connection_attempts_total[5m])), 0.001) > 0.1 and sum by (job, instance) (rate(bridge_connection_attempts_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          threshold_status: example
+        annotations:
+          summary: Bridge admission rejections are elevated
+          description: 'More than 10% of attempts at {{ $labels.instance }} have been rejected for authentication, admission-service, or capacity reasons for 5 minutes.'
+
+      - alert: GrpcBridgeBackendDialLatencyHigh
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(bridge_backend_dial_duration_seconds_bucket[5m]))) > 0.5 and sum by (job, instance) (rate(bridge_backend_dial_duration_seconds_count[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          threshold_status: example
+        annotations:
+          summary: Bridge backend dial latency is elevated
+          description: 'Backend dial p95 at {{ $labels.instance }} has exceeded 500 ms for 10 minutes.'

@@ -256,7 +256,9 @@ listener on `HEALTH_LISTEN` (default `127.0.0.1:8082`) serves these probes, so D
 healthchecks work when the public listener uses HTTPS/WSS. Compose does not publish
 the private port. `/healthz` probes default-backend TCP availability. `/metrics`
 exposes connection, traffic, failure, dial, and drain metrics; see the
-[metrics reference](docs/METRICS.md) for definitions and Prometheus queries.
+[metrics reference](docs/METRICS.md) for definitions and Prometheus queries. An
+[optional external monitoring stack](docs/MONITORING.md) provides a versioned
+Grafana dashboard and example alert rules without changing the default demo.
 
 On the first SIGTERM/SIGINT the bridge rejects new tunnels, keeps liveness and
 readiness observable, and lets existing tunnels finish for `DRAIN_GRACE_PERIOD`

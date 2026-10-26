@@ -30,6 +30,8 @@ jobs:
           python-version: '3.13'
       - run: go test -race ./...
       - run: go vet ./...
+      - run: docker run --rm --entrypoint /bin/promtool -v "${PWD}/monitoring/prometheus:/monitoring:ro" prom/prometheus:v3.5.0 check rules /monitoring/alerts.yml
+      - run: docker compose -f compose.yaml -f compose.monitoring.yaml config --quiet
       - run: go test ./cmd/bridge -fuzz=FuzzRelay -fuzztime=10s
       - run: npm ci && npm run build && npm test
         working-directory: web
