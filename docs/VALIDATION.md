@@ -7,6 +7,7 @@ The [CI workflow](../.github/workflows/ci.yml) runs on pushes and pull requests:
 | Check | Coverage |
 | --- | --- |
 | `go test -race ./...` and `go vet ./...` | Relay, handshake, routing, metrics, shutdown, TLS trust, close-frame, and concurrency checks. |
+| `promtool check rules monitoring/prometheus/alerts.yml` and `docker compose -f compose.yaml -f compose.monitoring.yaml config --quiet` | Optional alert-rule syntax and monitoring overlay composition. Dashboard JSON/exported-series consistency is covered by the Go tests. |
 | `go test ./cmd/bridge -fuzz=FuzzRelay -fuzztime=10s` | Short WebSocket parser fuzz run. |
 | `npm ci && npm run build && npm test` in `web/` | Strict TypeScript compilation, package exports, framing, shared ownership, recovery, retries, and interceptors. |
 | `npm run contracts:verify` in a pinned Node container with `protobuf` | Regenerates and verifies the strict contract descriptor fixture. |

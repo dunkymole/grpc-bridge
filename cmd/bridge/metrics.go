@@ -11,7 +11,8 @@ import (
 )
 
 // Fixed labels and buckets keep metrics memory independent of client input.
-var failureReasons = [...]string{"handshake", "origin", "auth", "profile", "capacity", "destination", "destination_denied", "policy", "dial", "upgrade", "shutdown"}
+var failureReasons = [...]string{"handshake", "origin", "auth", "profile", "capacity", "destination", "destination_denied", "policy", "admission", "dial", "upgrade", "shutdown"}
+var expirationSources = [...]string{"grant", "lifetime"}
 var dialBounds = [...]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 
 type metrics struct {
@@ -21,6 +22,7 @@ type metrics struct {
 	draining                                      atomic.Int64
 	established                                   atomic.Int64
 	failures                                      [len(failureReasons)]atomic.Uint64
+	expirations                                   [len(expirationSources)]atomic.Uint64
 	dial                                          histogram
 }
 
@@ -28,6 +30,15 @@ func (m *metrics) fail(reason string) {
 	for i, label := range failureReasons {
 		if label == reason {
 			m.failures[i].Add(1)
+			return
+		}
+	}
+}
+
+func (m *metrics) expire(source string) {
+	for i, label := range expirationSources {
+		if label == source {
+			m.expirations[i].Add(1)
 			return
 		}
 	}
@@ -121,6 +132,10 @@ func (g *gateway) serveMetrics(w http.ResponseWriter, r *http.Request) {
 	header("bridge_connection_failures_total", "Failed connection establishments by bounded reason; excludes failures after upgrade.", "counter")
 	for i, reason := range failureReasons {
 		fmt.Fprintf(w, "bridge_connection_failures_total{reason=%q} %d\n", reason, m.failures[i].Load())
+	}
+	header("bridge_tunnel_expirations_total", "Tunnels closed at a bounded admission-grant or configured-lifetime deadline.", "counter")
+	for i, source := range expirationSources {
+		fmt.Fprintf(w, "bridge_tunnel_expirations_total{source=%q} %d\n", source, m.expirations[i].Load())
 	}
 	header("bridge_bytes_forwarded_total", "Inner payload bytes accepted by destination writes, excluding WebSocket framing and controls.", "counter")
 	fmt.Fprintf(w, "bridge_bytes_forwarded_total{direction=\"to_backend\"} %d\nbridge_bytes_forwarded_total{direction=\"to_client\"} %d\n", m.toBackend.Load(), m.toClient.Load())

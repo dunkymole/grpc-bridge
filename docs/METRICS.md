@@ -20,6 +20,7 @@ when the bridge restarts. All series, including zero-valued failures, are emitte
 | `bridge_connections_opened_total` | Counter | Successfully flushed WebSocket upgrades. |
 | `bridge_connections_closed_total` | Counter | Established tunnel handlers that have finished, for any reason, including shutdown. |
 | `bridge_connection_failures_total{reason}` | Counter | Failed establishment, once per attempt, with reasons below. Does not count errors after upgrade. |
+| `bridge_tunnel_expirations_total{source}` | Counter | Tunnels closed at an admission-grant (`grant`) or configured maximum-tunnel (`lifetime`) deadline. |
 | `bridge_bytes_forwarded_total{direction}` | Counter | Inner payload bytes accepted by destination writes. Directions: `to_backend`, `to_client`. |
 | `bridge_backend_dial_duration_seconds` | Histogram | Time spent resolving/connecting to the backend, including optional TLS handshake and ALPN validation, for both successful and failed dials. |
 
@@ -35,6 +36,7 @@ Failure reasons are a fixed set:
 | `destination` | Malformed destination/query |
 | `destination_denied` | Destination not allowed |
 | `policy` | Policy file unavailable, invalid, or too large |
+| `admission` | Admission service unavailable or returned an invalid response |
 | `dial` | DNS, TCP, TLS, or ALPN failure |
 | `upgrade` | HTTP hijacking or upgrade-response write failure |
 | `shutdown` | Bridge stopping before upgrade |
@@ -43,6 +45,9 @@ The first rejection determines the reason. Requests rejected by Go's HTTP server
 before reaching the handler (for example malformed HTTP) are not included.
 Normal and abnormal closures after upgrade both increment the closed counter;
 the bridge does not classify individual RPC failures or decode gRPC status.
+Admission denials reported as 401/403 use the `auth` failure reason. Admission
+service failures use `admission`. The expiration counter records deadline-driven
+transport closure, not an immediate revocation signal from the admission service.
 
 Byte counts exclude WebSocket headers/control frames and TCP/TLS overhead, but
 include inner HTTP/2 headers and controls. Partial successful writes are counted
@@ -93,3 +98,6 @@ access at your deployment's network/proxy boundary if exposing the bridge public
 Drain counters are process-local and reset on restart. They increment immediately
 before shutdown closes the HTTP listeners, so a final scrape is best-effort; the
 bridge's shutdown log lines are the authoritative record for a terminating process.
+
+For the optional versioned Grafana dashboard, alert examples, multi-instance query
+semantics, and local provisioning, see [optional monitoring](MONITORING.md).

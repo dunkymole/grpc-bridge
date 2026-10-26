@@ -122,6 +122,11 @@ func TestAdmissionQuotaStormDuringTrafficAndGrantExpiry(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	for index, source := range expirationSources {
+		if source == "grant" && g.metrics.expirations[index].Load() != 1 {
+			t.Fatalf("grant expiry metric = %d, want 1", g.metrics.expirations[index].Load())
+		}
+	}
 	// The sibling must still pass data after the other principal expires.
 	if _, err := beta.Write(clientFrame(2, true, []byte("ok"))); err != nil {
 		t.Fatal(err)

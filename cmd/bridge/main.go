@@ -106,13 +106,18 @@ type activeTunnel struct {
 	forced           atomic.Bool
 }
 
-func (t *activeTunnel) close() {
+func (t *activeTunnel) close() bool {
 	t.connMu.Lock()
+	if t.closed {
+		t.connMu.Unlock()
+		return false
+	}
 	t.closed = true
 	client, upstream := t.client, t.upstream
 	t.connMu.Unlock()
 	closeTransportConn(client)
 	closeTransportConn(upstream)
+	return true
 }
 
 func (t *activeTunnel) setClient(client net.Conn) bool {
@@ -506,8 +511,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	heldPrincipal = true
 	authorizedAt := time.Now()
 	tunnelDeadline := authorizedAt.Add(g.maxTunnelLifetime)
+	expirationSource := "lifetime"
 	if !grantExpiry.IsZero() && grantExpiry.Before(tunnelDeadline) {
 		tunnelDeadline = grantExpiry
+		expirationSource = "grant"
 	}
 	dialDeadline := time.Now().Add(5 * time.Second)
 	if tunnelDeadline.Before(dialDeadline) {
@@ -576,7 +583,9 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	handshakePending = false
 	lifetimeTimer := time.AfterFunc(time.Until(tunnelDeadline), func() {
-		tunnel.close()
+		if tunnel.close() {
+			g.metrics.expire(expirationSource)
+		}
 	})
 	defer lifetimeTimer.Stop()
 	if !time.Now().Before(tunnelDeadline) {
